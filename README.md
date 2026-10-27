@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/toilahuongg/summonbar/actions/workflows/build.yml"><img alt="Build" src="https://github.com/toilahuongg/summonbar/actions/workflows/build.yml/badge.svg"></a>
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
   <img alt="Swift 5.10" src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white">
   <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-6E56CF">
@@ -254,6 +255,15 @@ Your personal commands and skills in `~/.claude/commands` and `~/.claude/skills`
 
 They always run with Claude Code, whatever `defaultAgent` is, and are hidden when `claude` isn't on your `PATH`. The files are read again each time the launcher opens.
 
+## Your accounts
+
+Summonbar never signs you in to anything. It runs the `claude` and `codex` you already installed, unmodified, the same way you would in a terminal, so they use whatever login or API key you set up in them.
+
+- It doesn't read, store or forward your credentials: no Keychain access, no `~/.claude` or `~/.codex` auth files, and no calls to the Anthropic or OpenAI APIs of its own.
+- Inline runs use each CLI's documented headless mode (`claude -p`, `codex exec`); usage counts against your own plan or key, as it does in the terminal.
+- That's the setup Anthropic's [Claude Code terms](https://code.claude.com/docs/en/legal-and-compliance) allow: signing in to the unmodified Claude Code binary with your own subscription. What they forbid is apps that offer their own Claude login or reuse subscription tokens, and Summonbar does neither.
+- Plan limits assume ordinary, individual use. Wiring `--ask` into a cron job or a loop that runs all day is on you; use an API key for that kind of automation.
+
 ## How it works
 
 - **The panel** is a borderless, non-activating `NSPanel`. It takes keyboard focus without pulling your editor out of the foreground, the same way Spotlight does. Keys are routed in `sendEvent`, and input methods such as Vietnamese Telex can finish composing before ↵ or esc are handled.
@@ -269,8 +279,10 @@ They always run with Claude Code, whatever `defaultAgent` is, and are hidden whe
 ```bash
 swift build                       # debug build
 ./scripts/build-app.sh            # release .app in build/
-./scripts/make-icon.sh            # re-render Resources/AppIcon.icns from assets/logo.svg (needs Google Chrome)
+./scripts/make-icon.sh            # re-render the app icon, logo.png and social-preview.png from their SVGs (needs Google Chrome)
 ```
+
+GitHub Actions builds every push to `main` and every pull request on macOS 14. The repository's social preview (`assets/social-preview.png`) is uploaded by hand in **Settings › General › Social preview** after it changes.
 
 ```
 Sources/Summonbar/
@@ -290,7 +302,7 @@ Sources/Summonbar/
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
   Config.swift, Store.swift
-assets/                logo (SVG source + PNG) and README screenshots
+assets/                logo and social preview (SVG sources + PNGs), README screenshots
 ```
 
 ## Contributing
