@@ -169,7 +169,7 @@ final class Updater: ObservableObject {
             throw UpdateError("the zip holds version \(version ?? "?"), not \(release.version)")
         }
         try runTool("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], "The update's signature is broken")
-        // A Developer ID build only takes updates signed by the same team.
+        // A certificate-signed build only takes updates signed by the same team.
         if let team = teamIdentifier() {
             let requirement = "=anchor apple generic and identifier \"\(bundle.bundleIdentifier!)\" and certificate leaf[subject.OU] = \"\(team)\""
             try runTool("/usr/bin/codesign", ["--verify", "--strict", "-R", requirement, app.path],
@@ -180,7 +180,7 @@ final class Updater: ObservableObject {
         return app
     }
 
-    /// The running app's Developer ID team, or nil when it's ad-hoc signed.
+    /// The running app's signing team, or nil when it's ad-hoc signed.
     nonisolated private static func teamIdentifier() -> String? {
         var code: SecCode?
         var staticCode: SecStaticCode?

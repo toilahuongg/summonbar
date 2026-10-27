@@ -1,8 +1,9 @@
 name: Release
 
 # Push a tag like v0.2.5 (matching CFBundleShortVersionString) to build a
-# Developer ID signed, notarized Summonbar-<version>.zip and attach it to the
-# release for that tag. A missing release is created as a draft for the notes.
+# universal Summonbar-<version>.zip signed with the Apple Development certificate
+# and attach it to the release for that tag. A missing release is created as a
+# draft for the notes. Apple Development builds can't be notarized.
 on:
   push:
     tags: ["v*"]
@@ -27,10 +28,10 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Import the Developer ID certificate
+      - name: Import the signing certificate
         env:
-          P12: ${{ secrets.DEVELOPER_ID_P12 }}
-          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          P12: ${{ secrets.SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
         run: |
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
@@ -39,20 +40,22 @@ jobs:
           security set-keychain-settings -lut 3600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          # The Apple Development certificate is only valid with its WWDR G3 intermediate.
+          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/cert.p12"
 
-      - name: Build, sign and notarize
-        env:
-          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+      - name: Build and sign
         run: |
-          export NOTARY_KEY="$RUNNER_TEMP/notary.p8"
-          echo "$NOTARY_KEY_P8" | base64 --decode > "$NOTARY_KEY"
-          ./scripts/build-app.sh --release
-          rm "$NOTARY_KEY"
+          SIGN_IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/signing.keychain-db" \
+            | awk -F'"' 'index($2, "Apple Development") == 1 { print $2; exit }')
+          if [[ -z "$SIGN_IDENTITY" ]]; then
+            echo "::error::SIGNING_P12 has no valid Apple Development identity"
+            exit 1
+          fi
+          SIGN_IDENTITY="$SIGN_IDENTITY" ./scripts/build-app.sh --release
 
       - name: Attach the zip to the release
         env:

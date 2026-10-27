@@ -1050,7 +1050,7 @@ final class LauncherModel: ObservableObject {
         let config = config.translation
         let automatic = config.fallback.map { "\(Language.name(config.target)), or \(Language.name($0)) for \(Language.name(config.target)) text" }
             ?? Language.name(config.target)
-        let pick: (String?) -> () -> Void = { code in { [unowned self] in t.choose(code); closeActions() } }
+        let pick: (String?) -> () -> Void = { [unowned self] code in { [unowned self] in t.choose(code); closeActions() } }
         return [ListItem(id: "lang:auto", section: "Translate To", title: "Automatic", subtitle: automatic, icon: "wand.and.stars",
                          tint: .indigo, accessory: t.chosenTarget == nil ? "current" : nil, primaryLabel: "Choose", primary: pick(nil))]
             + Language.all.map { language in

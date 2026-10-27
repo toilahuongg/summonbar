@@ -2,9 +2,9 @@ import Foundation
 import ServiceManagement
 
 /// Launch at login through SMAppService. macOS keys the login item to the code
-/// signature: a Developer ID build keeps it across updates, but an ad-hoc build
-/// (a local build without the certificate, or an older release) is tied
-/// to its cdhash, so after a rebuild `status` reads "not registered" while
+/// signature: a build signed with a certificate (Developer ID or Apple
+/// Development) keeps it across updates, but an ad-hoc build (a local build
+/// without a certificate, or an older release) is tied to its cdhash, so after a rebuild `status` reads "not registered" while
 /// System Settings still shows it on. The user's choice is kept here and
 /// registered again on launch.
 enum LoginItem {
