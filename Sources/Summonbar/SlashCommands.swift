@@ -3,8 +3,8 @@ import Foundation
 /// A Claude Code custom command (`.claude/commands/*.md`) or skill
 /// (`.claude/skills/<name>/SKILL.md`) that a project or `~/.claude` defines,
 /// or an Agent Skill in `.agents/skills` or `~/.agents/skills`.
-/// Running one sends `/name args` to Claude Code, or `$name args` to Codex
-/// for an `.agents` skill, since Claude Code doesn't load those.
+/// Running one sends `/name args` to Claude Code. An `.agents` skill runs with any
+/// agent: Codex gets `$name args`, the others get the skill's instructions inlined.
 struct SlashCommand: Identifiable {
     enum Kind { case command, skill }
 
@@ -20,6 +20,27 @@ struct SlashCommand: Identifiable {
 
     var id: String { url.path }
     var invocation: String { (isAgentSkill ? "$" : "/") + name }
+
+    /// What the user sees: `/name args` or `$name args`.
+    func title(args: String) -> String {
+        args.isEmpty ? invocation : "\(invocation) \(args)"
+    }
+
+    /// What `agent` is sent. Agents that don't load `.agents` skills get the SKILL.md
+    /// body inlined, so the run looks the same but works everywhere.
+    func prompt(for agent: Agent, args: String) -> String {
+        guard isAgentSkill, agent.id != "codex",
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return title(args: args) }
+        let body = SlashCommandScanner.frontMatter(text).body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let skill = """
+        Use the "\(name)" skill below. Paths in it are relative to \(url.deletingLastPathComponent().path).
+
+        <skill name="\(name)">
+        \(body)
+        </skill>
+        """
+        return args.isEmpty ? skill : skill + "\n\n" + args
+    }
 }
 
 enum SlashCommandScanner {
@@ -81,7 +102,7 @@ enum SlashCommandScanner {
 
     /// Flat `key: value` pairs from a leading `---` block. Folded values (`>`, `|`)
     /// are joined from their indented lines; that's all commands and skills use.
-    private static func frontMatter(_ text: String) -> (meta: [String: String], body: Substring) {
+    fileprivate static func frontMatter(_ text: String) -> (meta: [String: String], body: Substring) {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",
               let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" })

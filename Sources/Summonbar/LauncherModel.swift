@@ -104,9 +104,9 @@ final class LauncherModel: ObservableObject {
     var defaultAgent: Agent? { agents.first }
     /// Project commands and skills are Claude Code's, so they always go to it.
     var claudeAgent: Agent? { agents.first { $0.id == "claude" } }
-    /// Claude Code runs `.claude` commands and skills; Codex runs `.agents` skills.
+    /// Claude Code runs `.claude` commands and skills; `.agents` skills go to the default agent.
     private func agent(for cmd: SlashCommand) -> Agent? {
-        agents.first { $0.id == (cmd.isAgentSkill ? "codex" : "claude") }
+        cmd.isAgentSkill ? defaultAgent : claudeAgent
     }
     var runningCount: Int { runs.filter(\.isRunning).count }
 
@@ -582,13 +582,13 @@ final class LauncherModel: ObservableObject {
         startRun(agent, project, prompt)
     }
 
-    private func startRun(_ agent: Agent, _ project: Project, _ prompt: String) {
+    private func startRun(_ agent: Agent, _ project: Project, _ prompt: String, display: String? = nil) {
         markUsed(project)
         let run = AgentRun(agent: agent, project: project)
         run.onChange = { [weak self] in self?.runDidChange() }
         runs.insert(run, at: 0)
         push(.run(run))
-        run.send(prompt)
+        run.send(prompt, display: display)
     }
 
     private func sendFollowUp(_ run: AgentRun) {
@@ -1177,7 +1177,8 @@ final class LauncherModel: ObservableObject {
 
     private func slashItem(_ cmd: SlashCommand, _ p: Project, args: String = "", showProject: Bool = false) -> ListItem? {
         guard let agent = agent(for: cmd) else { return nil }
-        let prompt = args.isEmpty ? cmd.invocation : "\(cmd.invocation) \(args)"
+        let prompt = cmd.title(args: args)
+        let run = { [unowned self] (agent: Agent) in startRun(agent, p, cmd.prompt(for: agent, args: args), display: prompt) }
         let wantsArguments = args.isEmpty && cmd.argumentHint != nil
         return ListItem(
             id: "s:\(cmd.id)",
@@ -1187,15 +1188,23 @@ final class LauncherModel: ObservableObject {
             subtitle: showProject ? "in \(p.name) · ⌘K on a project to pick another" : cmd.description,
             icon: cmd.kind == .skill ? "wand.and.stars" : "slash.circle", tint: .purple, accessory: args.isEmpty ? cmd.argumentHint : nil,
             primaryLabel: wantsArguments ? "Add Arguments" : "Ask \(agent.name)",
-            primary: { [unowned self] in wantsArguments ? push(.slash(cmd, p)) : startRun(agent, p, prompt) },
+            primary: { [unowned self] in wantsArguments ? push(.slash(cmd, p)) : run(agent) },
             secondaryLabel: "Open in \(config.terminalName)",
-            secondary: { [unowned self] in launch(agent, p, prompt: prompt) },
+            secondary: { [unowned self] in launch(agent, p, prompt: cmd.prompt(for: agent, args: args)) },
             actions: { [unowned self] in
                 [
                     ListItem(id: "sa:args", section: cmd.invocation, title: "Run with Arguments…", icon: "text.cursor", tint: .purple,
                              primary: { [unowned self] in push(.slash(cmd, p)) }),
                     ListItem(id: "sa:term", section: cmd.invocation, title: "Open in \(config.terminalName)", icon: "terminal", tint: .green,
-                             primary: { [unowned self] in launch(agent, p, prompt: prompt) }),
+                             primary: { [unowned self] in launch(agent, p, prompt: cmd.prompt(for: agent, args: args)) }),
+                ]
+                // An Agent Skill works with any agent, not just the default one.
+                + (cmd.isAgentSkill ? agents.dropFirst() : []).map { other in
+                    ListItem(id: "sa:ask:\(other.id)", section: cmd.invocation, title: "Ask \(other.name)", icon: other.icon,
+                             tint: .orange, primary: { run(other) })
+                }
+                + [
+
                     ListItem(id: "sa:edit", section: cmd.invocation, title: "Edit in \(config.editor)", subtitle: cmd.url.tildePath,
                              icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
                              primary: { [unowned self] in TerminalLauncher.openInEditor(cmd.url, editor: config.editor); finish() }),
@@ -1209,14 +1218,15 @@ final class LauncherModel: ObservableObject {
         let args = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var item = slashItem(cmd, p, args: args) else {
             return [ListItem(id: "s:noagent", section: cmd.invocation,
-                             title: "\(cmd.isAgentSkill ? "Codex" : "Claude Code") isn't on PATH",
+                             title: cmd.isAgentSkill ? "No coding agents found on PATH" : "Claude Code isn't on PATH",
                              icon: "exclamationmark.triangle", tint: .orange, primary: {})]
         }
         // Here ↵ always runs, even with no arguments typed.
-        let prompt = item.title
         item.section = cmd.argumentHint ?? "Arguments"
         item.subtitle = cmd.description
-        item.primary = { [unowned self] in if let agent = agent(for: cmd) { startRun(agent, p, prompt) } }
+        item.primary = { [unowned self] in
+            if let agent = agent(for: cmd) { startRun(agent, p, cmd.prompt(for: agent, args: args), display: cmd.title(args: args)) }
+        }
         item.actions = nil
         return [item]
     }

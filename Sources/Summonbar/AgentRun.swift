@@ -101,10 +101,11 @@ final class AgentRun: ObservableObject, Identifiable {
 
     // MARK: - Process lifecycle
 
-    func send(_ prompt: String) {
+    /// `display` is shown in place of `prompt`, for prompts with hidden expansions.
+    func send(_ prompt: String, display: String? = nil) {
         guard let agent, !isRunning else { return }
-        if title.isEmpty { title = prompt }
-        append(Entry(kind: .user, text: prompt))
+        if title.isEmpty { title = display ?? prompt }
+        append(Entry(kind: .user, text: display ?? prompt))
 
         let resume = agent.canResume ? sessionId : nil
         let (args, stdin) = agent.headlessInvocation(prompt: prompt, resume: resume)

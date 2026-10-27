@@ -32,7 +32,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **New projects in one line.** `new my-app: build a todo app` creates `~/Workspaces/my-app`, runs `git init`, and pre-fills the prompt.
 - **Every session, not just Summonbar's.** "Agent Sessions" lists your Claude Code and Codex history, including the ones you started in a terminal or editor. Open one to read it and send a follow-up inline, or ⌘↵ to resume it in the terminal.
 - **Background runs.** Hide the launcher and keep working. The menu bar shows how many agents are running.
-- **Your Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` are a `/` away.
+- **Your Claude Code commands and skills, and Agent Skills.** Anything in a project's `.claude/commands`, `.claude/skills` and `.agents/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` and `~/.agents` are a `/` away.
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **An app launcher too.** Installed apps show up in search with aliases, per-app global hotkeys, and quit / restart / hide / force quit / trash from ⌘K, like Raycast.
 - **Translate as you type.** `tr bonjour` shows the translation right in the list; ↵ copies it.
@@ -258,6 +258,12 @@ Your personal commands and skills in `~/.claude/commands` and `~/.claude/skills`
 
 They always run with Claude Code, whatever `defaultAgent` is, and are hidden when `claude` isn't on your `PATH`. The files are read again each time the launcher opens.
 
+### Agent Skills
+
+Skills in `.agents/skills/<name>/SKILL.md` and `~/.agents/skills` (the cross-agent location) are listed too, as Agent Skills named `$name`. When the same name is also in `.claude`, the `.claude` one wins, so skills installed into both show up once.
+
+They run with your default agent; ⌘K has Ask for each other agent. Codex reads `.agents` itself, so it gets `$name args`. Claude Code and the other agents don't, so Summonbar puts the SKILL.md instructions into the prompt it sends them. The run still shows just `$name args`. On the prompt screen, typing `$` works like `/`.
+
 ## Your accounts
 
 Summonbar never signs you in to anything. It runs the `claude` and `codex` you already installed, unmodified, the same way you would in a terminal, so they use whatever login or API key you set up in them.
@@ -299,7 +305,7 @@ Sources/Summonbar/
   Extensions.swift     prompt extensions: metadata parsing, catalog, runs
   Agents.swift         agent catalog and command lines
   Projects.swift       workspace scanner, fuzzy match
-  SlashCommands.swift  a project's .claude commands and skills
+  SlashCommands.swift  .claude commands and skills, .agents skills
   Apps.swift           installed-app scanner, open / quit / restart / trash
   Translate.swift      languages, Google Translate client, live translation state
   Terminal.swift       terminal / editor launching
