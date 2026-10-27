@@ -77,6 +77,8 @@ final class LauncherModel: ObservableObject {
     var hidePanel: () -> Void = {}
     var openSettings: () -> Void = {}
     var openApplicationSettings: (InstalledApp) -> Void = { _ in }
+    var openShortcuts: () -> Void = {}
+    var updateSummonbar: () -> Void = {}
     var runsChanged: () -> Void = {}
 
     init() {
@@ -564,10 +566,13 @@ final class LauncherModel: ObservableObject {
                      primary: { [unowned self] in reloadAndReport() }),
             ListItem(id: "c:settings", section: "Commands", title: "Settings", subtitle: "Hotkey, folders, terminal, agents",
                      icon: "gearshape", accessory: "⌘,", primary: { [unowned self] in finish(); openSettings() }),
+            ListItem(id: "c:shortcuts", section: "Commands", title: "Keyboard Shortcuts", subtitle: "Every shortcut Summonbar knows",
+                     icon: "keyboard", primary: { [unowned self] in finish(); openShortcuts() }),
             ListItem(id: "c:config", section: "Commands", title: "Edit Config File", subtitle: Config.fileURL.tildePath,
                      icon: "doc.text", primary: { [unowned self] in openConfig() }),
             ListItem(id: "c:login", section: "Commands", title: loginEnabled ? "Disable Launch at Login" : "Enable Launch at Login",
                      icon: "power", primary: { [unowned self] in toggleLaunchAtLogin() }),
+            updateItem(),
             ListItem(id: "c:quit", section: "Commands", title: "Quit Summonbar", icon: "xmark.circle",
                      primary: { NSApp.terminate(nil) }),
         ]
@@ -1259,6 +1264,18 @@ final class LauncherModel: ObservableObject {
         _ = Config.load()  // writes the template if missing
         NSWorkspace.shared.open(Config.fileURL)
         finish()
+    }
+
+    private func updateItem() -> ListItem {
+        let updater = Updater.shared
+        if let release = updater.available {
+            return ListItem(id: "c:update", section: "Commands", title: "Update to Summonbar \(release.version)",
+                            subtitle: "You have \(updater.currentVersion) · relaunches when done", icon: "arrow.down.circle",
+                            tint: .green, primaryLabel: "Update", primary: { [unowned self] in finish(); updateSummonbar() })
+        }
+        return ListItem(id: "c:update", section: "Commands", title: "Check for Updates",
+                        subtitle: updater.isBusy ? "Checking…" : "Summonbar \(updater.currentVersion)",
+                        icon: "arrow.triangle.2.circlepath", primary: { [unowned self] in finish(); updateSummonbar() })
     }
 
     private func toggleLaunchAtLogin() {

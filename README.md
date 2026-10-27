@@ -67,6 +67,12 @@ Requires macOS 14+.
    xattr -dr com.apple.quarantine /Applications/Summonbar.app
    ```
 
+### Updating
+
+You only install once. Summonbar checks GitHub Releases once a day, and when there's a new version, **Update to Summonbar x.y.z…** shows up in the menu bar menu and in the launcher's commands. Choosing it downloads the release zip, checks its SHA-256 and signature, swaps it in for the app you're running (wherever it lives) and relaunches. Settings, runs and history are kept. You can also run **Check for Updates** any time, or turn automatic checks off in Settings › General.
+
+Versions before 0.2.3 don't have the updater, so install one of those by hand once more.
+
 ### Build from source
 
 You need a Swift toolchain. The Xcode Command Line Tools are enough; you don't need full Xcode.
@@ -118,6 +124,7 @@ These only work when Summonbar isn't already running.
 Open **Settings** with ⌘, in the launcher or from the menu bar. It covers:
 - the hotkey (click and press a new shortcut)
 - launch at login
+- updates: check now, install, or turn automatic checks off
 - the workspaces folder
 - terminal and editor
 - the default agent
@@ -147,6 +154,7 @@ The file itself, `~/.config/summonbar/config.json`, is created on first launch:
 - `terminal`: `ghostty`, `terminal`, `iterm`, or any app name that can open `.command` files.
 - `headlessArgs` apply to inline runs. By default Claude Code can edit files but asks before running anything else, and Codex is sandboxed to the workspace. Set `"disabled": true` on an agent to hide it.
 - `translation` (optional): `{ "to": "en", "alternate": "vi" }`. Text goes into `to`, or into `alternate` when it's already in `to`. `to` defaults to English and `alternate` to your first other system language; set `alternate` to `""` to turn it off. Codes are Google Translate's (`zh-CN`, `ja`, `pt`, …).
+- `checkForUpdates` (optional): `false` stops the daily check for a new release. You can still check from the menu bar.
 - `extensionDirectories` (optional): extra folders to load extensions from, e.g. a team repo of shared prompts.
 - `applications` (optional), keyed by bundle identifier so the settings survive an app moving:
 
@@ -282,6 +290,7 @@ Summonbar never signs you in to anything. It runs the `claude` and `codex` you a
   - Claude Code: `claude -p --output-format stream-json`.
   - Codex: `codex exec --json`.
   - The session id is kept so follow-ups and ⌘T resume the same conversation.
+- **Updates** come from the GitHub API's latest release. The zip is unpacked next to the running app, checked (SHA-256 from GitHub, bundle id, version, `codesign --verify`), and swapped in with `FileManager.replaceItemAt`; a small shell waits for the old process to exit and opens the new one. A release needs a `Summonbar-<version>.zip` asset holding `Summonbar.app`, with `CFBundleShortVersionString` matching the tag.
 - **Environment:** on launch Summonbar reads your login shell's environment once, so agents installed through nvm, Homebrew or `~/.local/bin` are found just as they are in your terminal.
 
 ## Development

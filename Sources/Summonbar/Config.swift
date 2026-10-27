@@ -63,6 +63,7 @@ private struct ConfigFile: Codable {
     var editor: String?
     var defaultAgent: String?
     var gitInitNewProjects: Bool?
+    var checkForUpdates: Bool?
     var agents: [String: AgentOverride]?
     var extensionDirectories: [String]?
     var applications: ApplicationsConfig?
@@ -76,6 +77,8 @@ struct Config {
     var editor: String
     var defaultAgent: String
     var gitInitNewProjects: Bool
+    /// Look for a new release on GitHub once a day.
+    var checkForUpdates: Bool
     var agents: [String: AgentOverride]
     /// Extra folders of extension scripts, e.g. a team repo of shared prompts.
     var extensionDirectories: [URL]
@@ -112,6 +115,7 @@ struct Config {
             editor: file.editor ?? "Visual Studio Code",
             defaultAgent: file.defaultAgent ?? "claude",
             gitInitNewProjects: file.gitInitNewProjects ?? true,
+            checkForUpdates: file.checkForUpdates ?? true,
             agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user },
             extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) },
             applications: file.applications ?? ApplicationsConfig(),
@@ -142,6 +146,7 @@ struct Config {
             editor: editor,
             defaultAgent: defaultAgent,
             gitInitNewProjects: gitInitNewProjects,
+            checkForUpdates: checkForUpdates ? nil : false,
             agents: agents,
             extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath),
             applications: applications.nonEmpty,

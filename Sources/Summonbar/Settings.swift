@@ -34,7 +34,7 @@ final class SettingsModel: ObservableObject {
         var id: String { app.key }
     }
 
-    enum Tab: Hashable { case general, agents, applications }
+    enum Tab: Hashable { case general, agents, applications, shortcuts }
 
     @Published var workspacesRoot = "" { didSet { scheduleSave() } }
     @Published var hotkey = "" { didSet { scheduleSave() } }
@@ -42,6 +42,7 @@ final class SettingsModel: ObservableObject {
     @Published var editor = "" { didSet { scheduleSave() } }
     @Published var defaultAgent = "" { didSet { scheduleSave() } }
     @Published var gitInitNewProjects = true { didSet { scheduleSave() } }
+    @Published var checkForUpdates = true { didSet { scheduleSave() } }
     @Published var translateTo = "" { didSet { scheduleSave() } }
     /// "" turns the alternate off; nil keeps the default (the system language).
     @Published var translateAlternate: String? { didSet { scheduleSave() } }
@@ -56,6 +57,8 @@ final class SettingsModel: ObservableObject {
     /// Reloads the app from config.json; returns an error to show, if any.
     var apply: () -> String? = { nil }
     var pauseHotKey: (Bool) -> Void = { _ in }
+    /// Checks for an update, or installs the one already found.
+    var updateSummonbar: () -> Void = {}
     /// The launcher's scan, so Settings doesn't walk the app folders again.
     var installedApps: () -> [InstalledApp] = { [] }
 
@@ -72,6 +75,7 @@ final class SettingsModel: ObservableObject {
         editor = config.editor
         defaultAgent = config.defaultAgent
         gitInitNewProjects = config.gitInitNewProjects
+        checkForUpdates = config.checkForUpdates
         translateTo = config.translation.target
         translateAlternate = config.translation.alternate
         agents = AgentCatalog.specs.map { spec in
@@ -115,6 +119,7 @@ final class SettingsModel: ObservableObject {
         config.editor = editor
         config.defaultAgent = defaultAgent
         config.gitInitNewProjects = gitInitNewProjects
+        config.checkForUpdates = checkForUpdates
         config.translation.to = translateTo == "en" && config.translation.to == nil ? nil : translateTo
         config.translation.alternate = translateAlternate
         for row in agents {
@@ -309,6 +314,9 @@ struct SettingsView: View {
                 ApplicationSettings(model: model)
                     .tabItem { Label("Applications", systemImage: "square.grid.2x2") }
                     .tag(SettingsModel.Tab.applications)
+                ShortcutSettings(model: model)
+                    .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+                    .tag(SettingsModel.Tab.shortcuts)
             }
             .padding(.top, 8)
             footer
@@ -350,6 +358,8 @@ private struct GeneralSettings: View {
                 }
                 Toggle("Launch at login", isOn: Binding(get: { model.launchAtLogin }, set: model.setLaunchAtLogin))
             }
+
+            UpdateSettings(model: model)
 
             Section {
                 LabeledContent("Workspaces folder") {
@@ -412,6 +422,40 @@ private struct GeneralSettings: View {
                     model[keyPath: keyPath] = value
                 }
             })
+    }
+}
+
+private struct UpdateSettings: View {
+    @ObservedObject var model: SettingsModel
+    @ObservedObject private var updater = Updater.shared
+
+    var body: some View {
+        Section {
+            LabeledContent("Summonbar \(updater.currentVersion)") {
+                HStack {
+                    if updater.isBusy { ProgressView().controlSize(.small) }
+                    Button(updater.available.map { "Install \($0.version) & Relaunch" } ?? "Check Now") { model.updateSummonbar() }
+                        .disabled(updater.isBusy)
+                }
+            }
+            Toggle("Check for updates automatically", isOn: $model.checkForUpdates)
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text(status).foregroundStyle(.secondary)
+        }
+    }
+
+    private var status: String {
+        switch updater.state {
+        case .checking: return "Checking GitHub for a new release…"
+        case .installing(let release): return "Downloading and installing \(release.version)…"
+        case .available(let release): return "\(release.name) is available. Updating replaces this copy and relaunches; your settings and runs are kept."
+        case .failed(let message): return message
+        case .idle, .upToDate:
+            let checked = updater.lastCheck.map { "Last checked \($0.formatted(.relative(presentation: .named)))." } ?? ""
+            return "Updates install in place from GitHub Releases, no reinstall needed. \(checked)"
+        }
     }
 }
 
@@ -480,6 +524,85 @@ private struct ApplicationSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Every keyboard shortcut in one place; the global ones reflect the current config.
+private struct ShortcutSettings: View {
+    @ObservedObject var model: SettingsModel
+
+    private static let launcher = [
+        ("Move selection", "↑ ↓"),
+        ("Run the selected item", "↵"),
+        ("Secondary action (shown in the footer)", "⌘↵"),
+        ("Show actions for the selected item", "⌘K"),
+        ("Open a project's prompt, or fill in arguments", "⇥"),
+        ("Go back, or close Summonbar", "esc"),
+        ("Go back when the field is empty", "⌫"),
+        ("Reload projects & config", "⌘R"),
+        ("Open Settings", "⌘,"),
+    ]
+    private static let agentRun = [
+        ("Send a follow-up, or Allow & Retry", "↵"),
+        ("Stop the agent", "⌘."),
+        ("Continue in the terminal", "⌘T"),
+    ]
+    private static let extensionOutput = [
+        ("Send to agent, or run again", "↵"),
+        ("Copy the prompt", "⌘↵"),
+        ("Stop the extension", "⌘."),
+    ]
+    private static let translate = [
+        ("Copy the translation", "↵"),
+        ("Swap languages", "⌘↵"),
+        ("Pick a language", "⌘K"),
+    ]
+    private static let prefixes = [
+        ("Create a new project", "new …"),
+        ("Translate text", "tr …"),
+        ("Run a slash command or skill (in a project's prompt)", "/ …"),
+    ]
+
+    var body: some View {
+        Form {
+            Section {
+                ShortcutRow(label: "Open Summonbar", keys: HotKey.describe(model.hotkey))
+                ForEach(model.appRows.filter { !$0.hotkey.isEmpty }) { row in
+                    ShortcutRow(label: "Open \(row.app.name)", keys: HotKey.describe(row.hotkey))
+                }
+            } header: {
+                Text("Global")
+            } footer: {
+                Text("Change these under General and Applications.").foregroundStyle(.secondary)
+            }
+            section("Launcher", Self.launcher)
+            section("Agent run", Self.agentRun)
+            section("Extension output", Self.extensionOutput)
+            section("Translate", Self.translate)
+            section("Type in the search field", Self.prefixes)
+        }
+        .formStyle(.grouped)
+    }
+
+    private func section(_ title: String, _ rows: [(String, String)]) -> some View {
+        Section(title) {
+            ForEach(rows, id: \.0) { ShortcutRow(label: $0.0, keys: $0.1) }
+        }
+    }
+}
+
+private struct ShortcutRow: View {
+    let label: String
+    let keys: String
+
+    var body: some View {
+        LabeledContent(label) {
+            Text(keys)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+        }
     }
 }
 
