@@ -23,6 +23,8 @@ enum Screen {
     case prompt(Project)
     case run(AgentRun)
     case runs
+    /// Claude Code and Codex sessions saved on disk, optionally only one project's.
+    case sessions(Project?)
     /// Collects extension arguments one at a time; with all collected it asks to confirm.
     case argument(Extension, Project, [String])
     /// The prompt an extension built, before it goes to the agent (preview, or a failed script).
@@ -67,6 +69,8 @@ final class LauncherModel: ObservableObject {
     /// Backs the "tr <text>" item in the root search.
     private var rootTranslation: Translation?
     private var usage = Store.loadUsage()
+    private var sessions: [AgentSession] = []
+    private var sessionScan: Task<Void, Never>?
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
 
@@ -118,6 +122,7 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): return "What should the agent do in \(p.name)?"
         case .run(let run): return run.isRunning ? "\(run.agentName) is working…" : (run.canFollowUp ? "Send a follow-up…" : "This agent can't continue the conversation inline")
         case .runs: return "Search agent runs…"
+        case .sessions: return "Search sessions…"
         case .argument(let ext, _, _):
             guard let arg = pendingArgument else { return "Press ↵ to run \(ext.title)" }
             return arg.kind == .dropdown ? "Choose \(arg.placeholder)…" : arg.placeholder + (arg.optional ? " (optional)" : "")
@@ -137,6 +142,7 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): return p.name
         case .run(let run): return "\(run.agentName) · \(run.projectName)"
         case .runs: return "Agent Runs"
+        case .sessions(let p): return p.map { "Sessions · \($0.name)" } ?? "Agent Sessions"
         case .argument(let ext, let project, _): return "\(ext.title) · \(project.name)"
         case .output(let run): return "\(run.ext.title) · \(run.project.name)"
         case .slash(let cmd, let project): return "\(cmd.invocation) · \(project.name)"
@@ -322,6 +328,7 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): items = promptItems(p)
         case .run: items = []
         case .runs: items = filter(runs.map(runItem))
+        case .sessions(let p): items = sessionItems(p)
         case .argument(let ext, let project, let values): items = argumentItems(ext, project, values)
         case .output: items = []
         case .slash(let cmd, let project): items = slashArgumentItems(cmd, project)
@@ -428,6 +435,8 @@ final class LauncherModel: ObservableObject {
         }
         out += projectExtensionItems(p)
         out += slashItems(p)
+        out.append(ListItem(id: "u:sessions", section: "Project", title: "Agent Sessions", subtitle: "Claude Code and Codex history here",
+                            icon: "clock.arrow.circlepath", tint: .purple, primary: { [unowned self] in openSessions(p) }))
         out += utilityItems(p)
         return out
     }
@@ -531,6 +540,9 @@ final class LauncherModel: ObservableObject {
                      icon: "folder.badge.plus", tint: .orange, primary: { [unowned self] in query = "new " }),
             ListItem(id: "c:runs", section: "Commands", title: "Agent Runs", subtitle: "\(runs.count) runs",
                      icon: "list.bullet.rectangle", tint: .purple, primary: { [unowned self] in push(.runs) }),
+            ListItem(id: "c:sessions", section: "Commands", title: "Agent Sessions",
+                     subtitle: "Claude Code and Codex history, terminal sessions included",
+                     icon: "clock.arrow.circlepath", tint: .purple, primary: { [unowned self] in openSessions(nil) }),
             ListItem(id: "c:translate", section: "Commands", title: "Translate", subtitle: "Or type “tr ” and the text",
                      icon: "character.bubble", tint: .indigo, primary: { [unowned self] in openTranslator() }),
             ListItem(id: "c:apps", section: "Commands", title: "Applications", subtitle: "\(visibleApps.count) installed",
@@ -587,11 +599,10 @@ final class LauncherModel: ObservableObject {
             return
         }
         query = ""
+        // A session opened from Agent Sessions only becomes a run once it's continued.
+        runs.removeAll { $0 === run }
+        runs.insert(run, at: 0)
         run.send(text)
-        if let index = runs.firstIndex(where: { $0 === run }), index != 0 {
-            runs.remove(at: index)
-            runs.insert(run, at: 0)
-        }
     }
 
     private func continueInTerminal(_ run: AgentRun) {
@@ -629,6 +640,111 @@ final class LauncherModel: ObservableObject {
         frames = [Frame(screen: .root)]
         push(.prompt(project), query: prompt)
         flash(existed ? "\(url.tildePath) already exists — opened it" : "Created \(url.tildePath)")
+    }
+
+    // MARK: - Agent sessions
+
+    private func openSessions(_ project: Project?) {
+        push(.sessions(project))
+        sessionScan?.cancel()
+        sessionScan = Task { [weak self] in
+            let found = await Task.detached(priority: .userInitiated) { SessionScanner.scan() }.value
+            guard let self, !Task.isCancelled else { return }
+            sessions = found
+            sessionScan = nil
+            if case .sessions = screen { refresh() }
+        }
+    }
+
+    private func sessionItems(_ project: Project?) -> [ListItem] {
+        let list = project.map { p in sessions.filter { $0.cwd.standardizedFileURL == p.url.standardizedFileURL } } ?? sessions
+        let q = query.trimmingCharacters(in: .whitespaces)
+        // Titles and folders both match, so "summonbar" finds that project's sessions. Titles are whole
+        // sentences, so scattered matches with big gaps (score ≤ 0) are noise.
+        let matches = q.isEmpty ? list : list.compactMap { s in
+            [Fuzzy.score(q, s.title), Fuzzy.score(q, projectName(at: s.cwd))].compactMap { $0 }.max().map { (s, $0) }
+        }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
+        if matches.isEmpty {
+            let scanning = sessionScan != nil
+            return [ListItem(id: "ss:none", section: "Agent Sessions",
+                             title: scanning ? "Reading sessions…" : q.isEmpty ? "No sessions yet" : "No matching sessions",
+                             subtitle: scanning ? nil : "From ~/.claude/projects and ~/.codex/sessions",
+                             icon: scanning ? "hourglass" : "tray", primary: {})]
+        }
+        return matches.map(sessionItem)
+    }
+
+    private func sessionItem(_ s: AgentSession) -> ListItem {
+        let agent = agents.first { $0.id == s.agentId }
+        let spec = AgentCatalog.specs.first { $0.id == s.agentId }
+        let name = spec?.name ?? s.agentId
+        let missing = { [unowned self] in flash("\(name) isn't on PATH") }
+        return ListItem(
+            id: "ss:\(s.id)", section: daySection(s.updated), title: s.title,
+            subtitle: "\(name) · \(projectName(at: s.cwd))", icon: spec?.icon ?? "bubble.left", tint: .purple,
+            accessory: relativeDate(s.updated),
+            primaryLabel: "Open Session", primary: agent.map { a in { [unowned self] in openSession(s, a) } } ?? missing,
+            secondaryLabel: "Resume in \(config.terminalName)",
+            secondary: agent.map { a in { [unowned self] in resumeInTerminal(s, a) } } ?? missing,
+            actions: { [unowned self] in
+                [
+                    ListItem(id: "ssa:term", section: s.title, title: "Resume in \(config.terminalName)", icon: "terminal", tint: .green,
+                             primary: agent.map { a in { [unowned self] in resumeInTerminal(s, a) } } ?? missing),
+                    ListItem(id: "ssa:id", section: s.title, title: "Copy Session ID", subtitle: s.sessionId, icon: "number",
+                             primary: { [unowned self] in copy(s.sessionId, label: "session ID") }),
+                    ListItem(id: "ssa:file", section: s.title, title: "Reveal Transcript in Finder", subtitle: s.file.tildePath,
+                             icon: "doc.text.magnifyingglass",
+                             primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([s.file]); finish() }),
+                    ListItem(id: "ssa:project", section: s.title, title: "Open Folder in \(config.editor)", subtitle: s.cwd.tildePath,
+                             icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
+                             primary: { [unowned self] in TerminalLauncher.openInEditor(s.cwd, editor: config.editor); finish() }),
+                ]
+            })
+    }
+
+    /// Shows what was said so far; ↵ there sends a follow-up that resumes the same session.
+    private func openSession(_ s: AgentSession, _ agent: Agent) {
+        if let run = runs.first(where: { $0.agentId == s.agentId && $0.sessionId == s.sessionId }) {
+            push(.run(run))
+            return
+        }
+        Task { [weak self] in
+            let entries = await Task.detached(priority: .userInitiated) { SessionScanner.transcript(s) }.value
+            guard let self, case .sessions = screen else { return }
+            let run = AgentRun(session: s, agent: agent, project: project(at: s.cwd), entries: entries)
+            run.onChange = { [weak self] in self?.runDidChange() }
+            push(.run(run))
+            // It can still be read when its folder is gone, just not continued.
+            if !FileManager.default.fileExists(atPath: s.cwd.path) { flash("\(s.cwd.tildePath) no longer exists") }
+        }
+    }
+
+    private func resumeInTerminal(_ s: AgentSession, _ agent: Agent) {
+        guard folderExists(s.cwd) else { return }
+        TerminalLauncher.open(command: agent.interactiveCommand(prompt: nil, resume: s.sessionId), in: s.cwd, terminal: config.terminal)
+        finish()
+    }
+
+    private func folderExists(_ url: URL) -> Bool {
+        if FileManager.default.fileExists(atPath: url.path) { return true }
+        flash("\(url.tildePath) no longer exists")
+        return false
+    }
+
+    private func project(at url: URL) -> Project {
+        projects.first { $0.url.standardizedFileURL == url.standardizedFileURL } ?? ProjectScanner.make(url, root: config.workspacesRoot)
+    }
+
+    private func projectName(at url: URL) -> String {
+        projects.first { $0.url.standardizedFileURL == url.standardizedFileURL }?.name ?? url.tildePath
+    }
+
+    private func daySection(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 { return "This Week" }
+        return "Earlier"
     }
 
     // MARK: - Applications

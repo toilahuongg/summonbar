@@ -73,6 +73,21 @@ final class AgentRun: ObservableObject, Identifiable {
         status = record.status == .running ? .stopped : record.status
     }
 
+    /// Picks up a session the agent saved itself, e.g. one started in a terminal.
+    init(session: AgentSession, agent: Agent, project: Project, entries: [Entry]) {
+        id = UUID()
+        agentId = agent.id
+        agentName = agent.name
+        self.agent = agent
+        projectURL = project.url
+        projectName = project.name
+        createdAt = session.updated
+        title = session.title
+        self.entries = entries
+        sessionId = session.sessionId
+        status = .done
+    }
+
     var record: RunRecord {
         RunRecord(id: id, agentId: agentId, agentName: agentName, projectPath: projectURL.path,
                   projectName: projectName, title: title, createdAt: createdAt, sessionId: sessionId,

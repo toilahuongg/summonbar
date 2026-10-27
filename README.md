@@ -30,6 +30,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Inline agent runs.** The answer streams into the launcher, with tool calls, file edits, command output and cost. Press ↵ to send a follow-up in the same session.
 - **Hand off to the terminal.** ⌘T moves an inline conversation into your terminal (`claude --resume`, `codex resume`). ⌘↵ on a project opens the agent there right away.
 - **New projects in one line.** `new my-app: build a todo app` creates `~/Workspaces/my-app`, runs `git init`, and pre-fills the prompt.
+- **Every session, not just Summonbar's.** "Agent Sessions" lists your Claude Code and Codex history, including the ones you started in a terminal or editor. Open one to read it and send a follow-up inline, or ⌘↵ to resume it in the terminal.
 - **Background runs.** Hide the launcher and keep working. The menu bar shows how many agents are running.
 - **Your Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` are a `/` away.
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
@@ -94,6 +95,7 @@ Default hotkey: **⇧⌘Space** (change it in Settings).
 | | `new my-app: build a todo app` | Create it and pre-fill the prompt |
 | | `new acme/foo` | Create it inside a group folder |
 | | `tr <text>` or `translate <text>` | Translate it inline; ↵ copies the translation |
+| Agent Sessions | ↵ / ⌘↵ | Open the session and continue it inline / resume it in the terminal |
 | Agent run | ↵ | Send a follow-up (resumes the same agent session) |
 | | ⌘T | Continue this conversation in the terminal (`claude --resume` / `codex resume`) |
 | | ⌘. | Stop the run |
