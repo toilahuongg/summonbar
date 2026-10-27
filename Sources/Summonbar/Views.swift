@@ -107,6 +107,7 @@ struct ResultsList: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
+                        Color.clear.frame(height: 0).id("top")
                         ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
                             if index == 0 || model.items[index - 1].section != item.section {
                                 Text(item.section)
@@ -129,6 +130,7 @@ struct ResultsList: View {
                     guard model.items.indices.contains(model.selection) else { return }
                     proxy.scrollTo(model.items[model.selection].id)
                 }
+                .onChange(of: model.query) { proxy.scrollTo("top", anchor: .top) }
             }
         }
     }
@@ -162,12 +164,20 @@ struct ItemRow: View {
     }
 }
 
-/// An SF Symbol name, an emoji, or a path to an image file (extension icons).
+/// An SF Symbol name, an emoji, a path to an image file (extension icons), or a path to an `.app` bundle.
 struct ItemIcon: View {
     let icon: String
     let tint: Color
 
     var body: some View {
+        if icon.hasPrefix("/"), icon.hasSuffix(".app") {
+            Image(nsImage: AppControl.icon(icon)).resizable().scaledToFit().frame(width: 26, height: 26)
+        } else {
+            glyph
+        }
+    }
+
+    private var glyph: some View {
         Group {
             if icon.hasPrefix("/") {
                 if let image = NSImage(contentsOfFile: icon) {
