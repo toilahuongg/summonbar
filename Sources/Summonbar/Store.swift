@@ -28,7 +28,9 @@ enum Store {
     private static let usageURL = directory.appendingPathComponent("usage.json")
     private static let appUsageURL = directory.appendingPathComponent("app-usage.json")
     private static let clipboardURL = directory.appendingPathComponent("clipboard.json")
+    private static let recentsURL = directory.appendingPathComponent("recents.json")
     static let maxRuns = 100
+    static let maxRecents = 20
 
     static func loadRuns() -> [RunRecord] {
         guard let data = try? Data(contentsOf: runsURL) else { return [] }
@@ -49,6 +51,17 @@ enum Store {
     static func saveUsage(_ usage: [String: Date], apps: Bool = false) {
         guard let data = try? encoder.encode(usage) else { return }
         try? data.write(to: apps ? appUsageURL : usageURL, options: .atomic)
+    }
+
+    /// IDs of launcher items picked from the root list, most recent first.
+    static func loadRecents() -> [String] {
+        guard let data = try? Data(contentsOf: recentsURL) else { return [] }
+        return (try? decoder.decode([String].self, from: data)) ?? []
+    }
+
+    static func saveRecents(_ ids: [String]) {
+        guard let data = try? encoder.encode(Array(ids.prefix(maxRecents))) else { return }
+        try? data.write(to: recentsURL, options: .atomic)
     }
 
     static func loadClipboard() -> [ClipboardEntry] {

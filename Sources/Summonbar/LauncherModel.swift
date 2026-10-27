@@ -73,6 +73,8 @@ final class LauncherModel: ObservableObject {
     private var rootTranslation: Translation?
     let clipboard = ClipboardHistory()
     private var usage = Store.loadUsage()
+    /// Root items picked lately, shown first under "Recent".
+    private var recents = Store.loadRecents()
     private var sessions: [AgentSession] = []
     private var sessionScan: Task<Void, Never>?
     private var saveWork: DispatchWorkItem?
@@ -272,6 +274,7 @@ final class LauncherModel: ObservableObject {
             return
         }
         if case .translate(let t) = screen { copyTranslation(t); return }
+        noteRecent()
         selectedItem?.primary()
     }
 
@@ -280,6 +283,7 @@ final class LauncherModel: ObservableObject {
         if case .output(let run) = screen { copy(run.output, label: "prompt"); return }
         if case .translate(let t) = screen { swapLanguages(t); return }
         guard let item = selectedItem else { return }
+        noteRecent()
         (item.secondary ?? item.primary)()
     }
 
@@ -290,6 +294,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func enterSelected() {
+        noteRecent()
         if let item = selectedItem, item.id.hasPrefix("x:") { item.primary(); return }
         if let item = selectedItem, item.id.hasPrefix("s:"), let addArguments = item.actions?().first {
             addArguments.primary()
@@ -394,9 +399,12 @@ final class LauncherModel: ObservableObject {
         }
 
         if q.isEmpty {
+            let recent = recentItems(limit: 5)
+            let shown = Set(recent.map(\.id))
+            out += recent
             out += runs.prefix(3).map(runItem).map { var i = $0; i.section = "Recent Runs"; return i }
-            out += sortedProjects().map(projectItem)
-            out += commandItems()
+            out += sortedProjects().map(projectItem).filter { !shown.contains($0.id) }
+            out += commandItems().filter { !shown.contains($0.id) }
             return out
         }
 
@@ -420,7 +428,50 @@ final class LauncherModel: ObservableObject {
             out.append(createItem(q))
         }
         out += filter(commandItems())
-        return out
+        return promotingRecents(out, query: q)
+    }
+
+    /// Kinds of root items worth remembering; runs, asks and "create" are one-offs.
+    private static let recentPrefixes = ["p:", "app:", "c:", "x:", "s:"]
+    /// Picking these again by reflex would quit something.
+    private static let neverRecent: Set<String> = ["c:quit", "c:quitall"]
+
+    private func noteRecent() {
+        guard case .root = screen, let id = selectedItem?.id,
+              Self.recentPrefixes.contains(where: id.hasPrefix), !Self.neverRecent.contains(id) else { return }
+        recents.removeAll { $0 == id }
+        recents.insert(id, at: 0)
+        recents = Array(recents.prefix(Store.maxRecents))
+        Store.saveRecents(recents)
+    }
+
+    /// Rebuilds recently picked items that still exist; extensions and commands run in the context project.
+    private func recentItems(limit: Int) -> [ListItem] {
+        guard !recents.isEmpty else { return [] }
+        var candidates: [ListItem] = projects.map(projectItem) + commandItems()
+        let appKeys = recents.filter { $0.hasPrefix("app:") }
+        if !appKeys.isEmpty {
+            let running = AppControl.running()
+            candidates += visibleApps.filter { appKeys.contains("app:" + $0.id) }
+                .map { appItem($0, running: running[$0.url.path]) }
+        }
+        if let project = contextProject, recents.contains(where: { $0.hasPrefix("x:") || $0.hasPrefix("s:") }) {
+            candidates += extensions.map { extensionItem($0, project: project, showProject: true) }
+            candidates += slashItems(project, showProject: true, includePersonal: true)
+        }
+        let byId = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return recents.compactMap { byId[$0] }.prefix(limit).map { var i = $0; i.section = "Recent"; return i }
+    }
+
+    /// Moves results picked lately to the top, but only for close matches so a prompt still offers Ask Agent first.
+    private func promotingRecents(_ list: [ListItem], query: String) -> [ListItem] {
+        let rank = Dictionary(recents.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        let promoted = list.filter { item in
+            rank[item.id] != nil && (Fuzzy.score(query, item.title) ?? .min) > 0
+        }.sorted { rank[$0.id]! < rank[$1.id]! }.prefix(3)
+        guard !promoted.isEmpty else { return list }
+        let ids = Set(promoted.map(\.id))
+        return promoted.map { var i = $0; i.section = "Recent"; return i } + list.filter { !ids.contains($0.id) }
     }
 
     private func askItems(_ prompt: String) -> [ListItem] {
