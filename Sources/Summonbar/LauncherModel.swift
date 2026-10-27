@@ -31,6 +31,8 @@ enum Screen {
     case slash(SlashCommand, Project)
     /// Installed apps, or only the running ones.
     case apps(running: Bool)
+    /// Translates what's typed as you type.
+    case translate(Translation)
 }
 
 @MainActor
@@ -62,6 +64,8 @@ final class LauncherModel: ObservableObject {
     private(set) var apps: [InstalledApp] = []
     private var appUsage = Store.loadUsage(apps: true)
     private var appScan: Task<Void, Never>?
+    /// Backs the "tr <text>" item in the root search.
+    private var rootTranslation: Translation?
     private var usage = Store.loadUsage()
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
@@ -118,6 +122,7 @@ final class LauncherModel: ObservableObject {
             return run.prompt != nil ? "Press ↵ to send to \(agent(for: run.ext)?.name ?? "the agent")" : "Press ↵ to run again"
         case .slash(let cmd, _): return cmd.argumentHint.map { "Arguments: \($0)" } ?? "Arguments for \(cmd.invocation) (optional)"
         case .apps(let running): return running ? "Search running applications…" : "Search applications…"
+        case .translate: return "Type or paste text to translate…"
         }
     }
 
@@ -132,6 +137,7 @@ final class LauncherModel: ObservableObject {
         case .output(let run): return "\(run.ext.title) · \(run.project.name)"
         case .slash(let cmd, let project): return "\(cmd.invocation) · \(project.name)"
         case .apps(let running): return running ? "Running Applications" : "Applications"
+        case .translate: return "Translate"
         }
     }
 
@@ -146,6 +152,10 @@ final class LauncherModel: ObservableObject {
         if case .output(let run) = screen {
             let primary = run.isRunning ? ("Stop", "⌘.") : (run.prompt != nil ? ("Send to Agent", "↵") : ("Run Again", "↵"))
             return [primary, ("Copy Prompt", "⌘↵"), ("Back", "esc")]
+        }
+        if case .translate(let t) = screen {
+            let primary = if case .failed = t.status { ("Try Again", "↵") } else { ("Copy Translation", "↵") }
+            return [primary, ("Swap Languages", "⌘↵"), ("Language", "⌘K"), ("Back", "esc")]
         }
         guard let item = selectedItem else { return [("Back", "esc")] }
         var h = [(item.primaryLabel, "↵")]
@@ -163,6 +173,7 @@ final class LauncherModel: ObservableObject {
         extensions = ExtensionCatalog.scan(config: config)
         slashCache = [:]
         personalSlashCache = nil
+        rootTranslation = nil
         rescanApps()
     }
 
@@ -235,17 +246,20 @@ final class LauncherModel: ObservableObject {
             if let prompt = run.prompt { sendToAgent(run.ext, run.project, prompt) } else { launch(run) }
             return
         }
+        if case .translate(let t) = screen { copyTranslation(t); return }
         selectedItem?.primary()
     }
 
     func performSecondary() {
         if case .run(let run) = screen { continueInTerminal(run); return }
         if case .output(let run) = screen { copy(run.output, label: "prompt"); return }
+        if case .translate(let t) = screen { swapLanguages(t); return }
         guard let item = selectedItem else { return }
         (item.secondary ?? item.primary)()
     }
 
     func showActions() {
+        if case .translate(let t) = screen { push(.actions(title: "Translate To", items: languageItems(t))); return }
         guard let item = selectedItem, let actions = item.actions?() else { return }
         push(.actions(title: item.title, items: actions))
     }
@@ -267,7 +281,7 @@ final class LauncherModel: ObservableObject {
         let cmd = flags.contains(.command)
         let inRun: Bool = {
             switch screen {
-            case .run, .output: return true
+            case .run, .output, .translate: return true
             default: return false
             }
         }()
@@ -308,6 +322,7 @@ final class LauncherModel: ObservableObject {
         case .output: items = []
         case .slash(let cmd, let project): items = slashArgumentItems(cmd, project)
         case .apps(let running): items = appListItems(runningOnly: running)
+        case .translate(let t): items = []; t.update(query)
         }
         if selection >= items.count { selection = max(items.count - 1, 0) }
     }
@@ -338,6 +353,12 @@ final class LauncherModel: ObservableObject {
         if query.lowercased().hasPrefix("new ") {
             let spec = q.dropFirst(3).trimmingCharacters(in: .whitespaces)
             out.append(createItem(spec))
+            out += commandItems().filter { Fuzzy.score(q, $0.title) != nil }
+            return out
+        }
+
+        if let prefix = ["translate ", "tr "].first(where: { query.lowercased().hasPrefix($0) }) {
+            out.append(translateItem(String(query.dropFirst(prefix.count))))
             out += commandItems().filter { Fuzzy.score(q, $0.title) != nil }
             return out
         }
@@ -505,6 +526,8 @@ final class LauncherModel: ObservableObject {
                      icon: "folder.badge.plus", tint: .orange, primary: { [unowned self] in query = "new " }),
             ListItem(id: "c:runs", section: "Commands", title: "Agent Runs", subtitle: "\(runs.count) runs",
                      icon: "list.bullet.rectangle", tint: .purple, primary: { [unowned self] in push(.runs) }),
+            ListItem(id: "c:translate", section: "Commands", title: "Translate", subtitle: "Or type “tr ” and the text",
+                     icon: "character.bubble", tint: .indigo, primary: { [unowned self] in openTranslator() }),
             ListItem(id: "c:apps", section: "Commands", title: "Applications", subtitle: "\(visibleApps.count) installed",
                      icon: "square.grid.2x2", tint: .blue, primary: { [unowned self] in push(.apps(running: false)) }),
             ListItem(id: "c:running", section: "Commands", title: "Running Applications", subtitle: "Switch to, hide or quit apps",
@@ -834,6 +857,71 @@ final class LauncherModel: ObservableObject {
     private func markUsed(appKey: String) {
         appUsage[appKey] = Date()
         Store.saveUsage(appUsage, apps: true)
+    }
+
+    // MARK: - Translate
+
+    private func translateItem(_ text: String) -> ListItem {
+        let t = rootTranslation ?? Translation(config: config.translation)
+        if rootTranslation == nil {
+            t.onChange = { [weak self] in
+                guard let self, case .root = screen else { return }
+                refresh()
+            }
+            rootTranslation = t
+        }
+        t.update(text)
+        let open = { [unowned self] in openTranslator(text, target: t.chosenTarget) }
+        guard !t.input.isEmpty else {
+            return ListItem(id: "tr", section: "Translate", title: "Translate: type the text after “tr ”",
+                            subtitle: "To \(Language.name(t.target)) · ⌘K for another language", icon: "character.bubble", tint: .indigo,
+                            primaryLabel: "Open Translator", primary: open, actions: { [unowned self] in languageItems(t) })
+        }
+        let title: String
+        if case .failed(let message) = t.status { title = message }
+        else { title = t.output.isEmpty ? "Translating…" : t.output }
+        return ListItem(id: "tr", section: "Translate", title: title, subtitle: t.direction, icon: "character.bubble", tint: .indigo,
+                        accessory: t.isTranslating && !t.output.isEmpty ? "translating…" : nil,
+                        primaryLabel: "Copy Translation", primary: { [unowned self] in copyTranslation(t) },
+                        secondaryLabel: "Open Translator", secondary: open,
+                        actions: { [unowned self] in languageItems(t) })
+    }
+
+    private func openTranslator(_ text: String = "", target: String? = nil) {
+        let t = Translation(config: config.translation, target: target)
+        t.onChange = { [weak self] in self?.objectWillChange.send() }
+        push(.translate(t), query: text)
+    }
+
+    /// Copies the translation and hides the launcher, so it can be pasted right away. After a failure, tries again.
+    private func copyTranslation(_ t: Translation) {
+        if case .failed = t.status { t.choose(t.chosenTarget); refresh(); return }
+        guard !t.isTranslating else { flash("Still translating…"); return }
+        guard !t.output.isEmpty else { flash("Type the text to translate first"); return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(t.output, forType: .string)
+        finish()
+    }
+
+    /// Translates the result back into the language it came from.
+    private func swapLanguages(_ t: Translation) {
+        guard !t.isTranslating, !t.output.isEmpty, let source = t.source else { return }
+        t.choose(source)
+        setQuery(t.output)
+    }
+
+    private func languageItems(_ t: Translation) -> [ListItem] {
+        let config = config.translation
+        let automatic = config.fallback.map { "\(Language.name(config.target)), or \(Language.name($0)) for \(Language.name(config.target)) text" }
+            ?? Language.name(config.target)
+        let pick: (String?) -> () -> Void = { code in { [unowned self] in t.choose(code); closeActions() } }
+        return [ListItem(id: "lang:auto", section: "Translate To", title: "Automatic", subtitle: automatic, icon: "wand.and.stars",
+                         tint: .indigo, accessory: t.chosenTarget == nil ? "current" : nil, primaryLabel: "Choose", primary: pick(nil))]
+            + Language.all.map { language in
+                ListItem(id: "lang:\(language.code)", section: "Translate To", title: language.name, subtitle: language.code,
+                         icon: "globe", tint: .indigo, accessory: t.chosenTarget == language.code ? "current" : nil,
+                         primaryLabel: "Choose", primary: pick(language.code))
+            }
     }
 
     // MARK: - Extensions

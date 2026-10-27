@@ -40,6 +40,21 @@ struct ApplicationsConfig: Codable {
     }
 }
 
+/// The `translation` key of config.json, as Google Translate language codes.
+struct TranslationConfig: Codable {
+    /// What text is translated into.
+    var to: String?
+    /// Used instead when the text is already in `to`; "" turns that off. Defaults to a system language.
+    var alternate: String?
+
+    var target: String { to.flatMap { $0.isEmpty ? nil : $0 } ?? "en" }
+    var fallback: String? {
+        if let alternate { return alternate.isEmpty ? nil : alternate }
+        // The first system language that isn't `to`, else English.
+        return Language.preferred.first { !Language.same($0, target) } ?? (Language.same(target, "en") ? nil : "en")
+    }
+}
+
 /// On-disk shape of ~/.config/summonbar/config.json. Every key is optional.
 private struct ConfigFile: Codable {
     var workspacesRoot: String?
@@ -51,6 +66,7 @@ private struct ConfigFile: Codable {
     var agents: [String: AgentOverride]?
     var extensionDirectories: [String]?
     var applications: ApplicationsConfig?
+    var translation: TranslationConfig?
 }
 
 struct Config {
@@ -64,6 +80,7 @@ struct Config {
     /// Extra folders of extension scripts, e.g. a team repo of shared prompts.
     var extensionDirectories: [URL]
     var applications: ApplicationsConfig
+    var translation: TranslationConfig
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/summonbar", isDirectory: true)
@@ -97,7 +114,8 @@ struct Config {
             gitInitNewProjects: file.gitInitNewProjects ?? true,
             agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user },
             extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) },
-            applications: file.applications ?? ApplicationsConfig()
+            applications: file.applications ?? ApplicationsConfig(),
+            translation: file.translation ?? TranslationConfig()
         )
     }
 
@@ -126,7 +144,8 @@ struct Config {
             gitInitNewProjects: gitInitNewProjects,
             agents: agents,
             extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath),
-            applications: applications.nonEmpty
+            applications: applications.nonEmpty,
+            translation: translation.to == nil && translation.alternate == nil ? nil : translation
         ))
     }
 

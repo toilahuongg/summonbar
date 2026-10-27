@@ -49,6 +49,8 @@ struct LauncherView: View {
             RunView(run: run)
         } else if case .output(let run) = model.screen {
             ExtensionOutputView(run: run)
+        } else if case .translate(let translation) = model.screen {
+            TranslateView(translation: translation)
         } else {
             ResultsList(model: model)
         }
@@ -281,6 +283,44 @@ struct ExtensionOutputView: View {
             }
             .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: run.output) { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+    }
+}
+
+struct TranslateView: View {
+    @ObservedObject var translation: Translation
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "character.bubble").foregroundStyle(.indigo)
+                    Text(translation.direction)
+                    if translation.chosenTarget == nil { Text("· automatic").foregroundStyle(.tertiary) }
+                    Spacer()
+                    if translation.isTranslating { ProgressView().controlSize(.small) }
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                if case .failed(let message) = translation.status {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.red)
+                } else if translation.input.isEmpty {
+                    Text("Type or paste text above. ⌘K picks the language; Google Translate does the translating.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text(translation.output)
+                        .font(.system(size: 16))
+                        .lineSpacing(3)
+                        .textSelection(.enabled)
+                        .opacity(translation.isTranslating ? 0.5 : 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

@@ -42,6 +42,9 @@ final class SettingsModel: ObservableObject {
     @Published var editor = "" { didSet { scheduleSave() } }
     @Published var defaultAgent = "" { didSet { scheduleSave() } }
     @Published var gitInitNewProjects = true { didSet { scheduleSave() } }
+    @Published var translateTo = "" { didSet { scheduleSave() } }
+    /// "" turns the alternate off; nil keeps the default (the system language).
+    @Published var translateAlternate: String? { didSet { scheduleSave() } }
     @Published var agents: [AgentRow] = [] { didSet { scheduleSave() } }
     @Published var appsInSearch = true { didSet { scheduleSave() } }
     @Published var appRows: [AppRow] = [] { didSet { scheduleSave() } }
@@ -69,6 +72,8 @@ final class SettingsModel: ObservableObject {
         editor = config.editor
         defaultAgent = config.defaultAgent
         gitInitNewProjects = config.gitInitNewProjects
+        translateTo = config.translation.target
+        translateAlternate = config.translation.alternate
         agents = AgentCatalog.specs.map { spec in
             let override = config.agents[spec.id]
             return AgentRow(id: spec.id, name: spec.name, icon: spec.icon, path: Shell.which(spec.binary),
@@ -110,6 +115,8 @@ final class SettingsModel: ObservableObject {
         config.editor = editor
         config.defaultAgent = defaultAgent
         config.gitInitNewProjects = gitInitNewProjects
+        config.translation.to = translateTo == "en" && config.translation.to == nil ? nil : translateTo
+        config.translation.alternate = translateAlternate
         for row in agents {
             let args = Args.split(row.args), headless = Args.split(row.headlessArgs)
             // Keep config.json tidy: only write agents the user has touched.
@@ -358,6 +365,23 @@ private struct GeneralSettings: View {
                 Text("Projects")
             } footer: {
                 Text("Top-level folders are projects; folders that only hold projects (like a company folder) are expanded.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Translate to", selection: $model.translateTo) {
+                    ForEach(Language.all) { Text($0.name).tag($0.code) }
+                }
+                Picker("Text already in \(Language.name(model.translateTo))", selection: $model.translateAlternate) {
+                    Text("Default (\(TranslationConfig(to: model.translateTo).fallback.map(Language.name) ?? "none"))").tag(String?.none)
+                    Text("Leave as is").tag(String?.some(""))
+                    Divider()
+                    ForEach(Language.all.filter { $0.code != model.translateTo }) { Text($0.name).tag(String?.some($0.code)) }
+                }
+            } header: {
+                Text("Translate")
+            } footer: {
+                Text("Type “tr ” and the text in the launcher. Text is sent to Google Translate.")
                     .foregroundStyle(.secondary)
             }
 

@@ -33,6 +33,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Your Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` are a `/` away.
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **An app launcher too.** Installed apps show up in search with aliases, per-app global hotkeys, and quit / restart / hide / force quit / trash from ⌘K, like Raycast.
+- **Translate as you type.** `tr bonjour` shows the translation right in the list; ↵ copies it.
 - **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
 
 <p align="center">
@@ -76,6 +77,7 @@ Default hotkey: **⇧⌘Space** (change it in Settings).
 | | `new my-app` | Create `~/Workspaces/my-app` (with `git init`) |
 | | `new my-app: build a todo app` | Create it and pre-fill the prompt |
 | | `new acme/foo` | Create it inside a group folder |
+| | `tr <text>` or `translate <text>` | Translate it inline; ↵ copies the translation |
 | Agent run | ↵ | Send a follow-up (resumes the same agent session) |
 | | ⌘T | Continue this conversation in the terminal (`claude --resume` / `codex resume`) |
 | | ⌘. | Stop the run |
@@ -100,6 +102,7 @@ Open **Settings** with ⌘, in the launcher or from the menu bar. It covers:
 - the workspaces folder
 - terminal and editor
 - the default agent
+- the translation languages
 - per-agent arguments
 - app aliases, hotkeys and which apps show in search
 
@@ -124,6 +127,7 @@ The file itself, `~/.config/summonbar/config.json`, is created on first launch:
 
 - `terminal`: `ghostty`, `terminal`, `iterm`, or any app name that can open `.command` files.
 - `headlessArgs` apply to inline runs. By default Claude Code can edit files but asks before running anything else, and Codex is sandboxed to the workspace. Set `"disabled": true` on an agent to hide it.
+- `translation` (optional): `{ "to": "en", "alternate": "vi" }`. Text goes into `to`, or into `alternate` when it's already in `to`. `to` defaults to English and `alternate` to your first other system language; set `alternate` to `""` to turn it off. Codes are Google Translate's (`zh-CN`, `ja`, `pt`, …).
 - `extensionDirectories` (optional): extra folders to load extensions from, e.g. a team repo of shared prompts.
 - `applications` (optional), keyed by bundle identifier so the settings survive an app moving:
 
@@ -203,6 +207,23 @@ Force Quit, Quit All and Move to Trash ask for confirmation first. Apps in `/Sys
 
 There's also a switch to leave apps out of search entirely; hotkeys keep working without it.
 
+## Translate
+
+Type `tr ` (or `translate `) and the text in the root search. The translation shows up as the first result while you type, with the detected language in the subtitle.
+
+| Where | Key | Action |
+|---|---|---|
+| `tr …` result | ↵ | Copy the translation and hide the launcher |
+| | ⌘↵ | Open it in the translator |
+| | ⌘K | Translate into another language |
+| Translator | ↵ | Copy the translation (after an error: try again) |
+| | ⌘↵ | Swap languages: translate the result back |
+| | ⌘K | Pick the language, or go back to Automatic |
+
+The translator also opens from the **Translate** command and shows long text in full. By default text is translated into English, and English text into your first other system language, so with English and Vietnamese set up you never need to pick a language. Change both in **Settings › General › Translate** or with the `translation` key above.
+
+Translations come from Google Translate's keyless web endpoint, so the text you translate is sent to Google.
+
 ## Claude Code commands and skills
 
 Summonbar reads each project's own Claude Code setup and lists it next to the extensions:
@@ -251,6 +272,7 @@ Sources/Summonbar/
   Projects.swift       workspace scanner, fuzzy match
   SlashCommands.swift  a project's .claude commands and skills
   Apps.swift           installed-app scanner, open / quit / restart / trash
+  Translate.swift      languages, Google Translate client, live translation state
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
   Config.swift, Store.swift
