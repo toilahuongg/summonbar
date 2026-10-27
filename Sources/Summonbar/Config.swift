@@ -28,7 +28,7 @@ struct Config {
     var defaultAgent: String
     var gitInitNewProjects: Bool
     var agents: [String: AgentOverride]
-    /// Extra folders of extension scripts, e.g. a clone of raycast/script-commands.
+    /// Extra folders of extension scripts, e.g. a team repo of shared prompts.
     var extensionDirectories: [URL]
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
@@ -89,7 +89,8 @@ struct Config {
             editor: editor,
             defaultAgent: defaultAgent,
             gitInitNewProjects: gitInitNewProjects,
-            agents: agents
+            agents: agents,
+            extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath)
         ))
     }
 

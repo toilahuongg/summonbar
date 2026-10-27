@@ -1,29 +1,13 @@
 import Foundation
 
-/// How an extension's output is shown. Mirrors Raycast Script Commands, plus
-/// `terminal` and `agent`, which are Summonbar's own.
-enum ExtensionMode: String {
-    /// Run in the background and hide the launcher.
-    case silent
-    /// Show the last line of output in the footer.
-    case compact
-    /// Stream all output into the launcher.
-    case fullOutput
-    /// Like compact, and keep the last line as the item's subtitle.
-    case inline
-    /// Run the script interactively in the terminal.
-    case terminal
-    /// Send the script's output as a prompt to a coding agent.
-    case agent
-}
-
+/// A script that builds a prompt for a coding agent. It runs inside a project,
+/// and whatever it prints is sent to the agent as the task.
 struct ExtensionArgument {
-    enum Kind { case text, password, dropdown }
+    enum Kind { case text, dropdown }
 
     var kind: Kind
     var placeholder: String
     var optional: Bool
-    var percentEncoded: Bool
     /// (title, value) pairs for dropdowns.
     var options: [(title: String, value: String)]
 }
@@ -32,16 +16,10 @@ struct Extension: Identifiable {
     let url: URL
     let title: String
     let description: String?
-    let packageName: String?
     let icon: String
-    let mode: ExtensionMode
     let arguments: [ExtensionArgument]
-    /// Project extensions run inside a project and show up in its actions.
-    let projectScoped: Bool
-    let currentDirectory: URL?
     let needsConfirmation: Bool
-    let refreshTime: TimeInterval?
-    /// Agent id for `agent` mode; nil means the default agent.
+    /// Agent id to send the prompt to; nil means the default agent.
     let agentId: String?
     /// Interpreter + script, so files without the executable bit still run.
     let command: [String]
@@ -76,7 +54,7 @@ enum ExtensionCatalog {
         return found.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
-    /// Reads `@summonbar.key value` (or Raycast's `@raycast.key value`) comments from the file header.
+    /// Reads `@summonbar.key value` comments from the file header.
     static func parse(_ url: URL) -> Extension? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
@@ -85,34 +63,21 @@ enum ExtensionCatalog {
         let lines = text.components(separatedBy: .newlines)
         var meta: [String: String] = [:]
         for line in lines.prefix(80) {
-            for prefix in ["@summonbar.", "@raycast."] {
-                guard let range = line.range(of: prefix) else { continue }
-                let rest = line[range.upperBound...]
-                let key = String(rest.prefix { $0.isLetter || $0.isNumber })
-                let value = rest.dropFirst(key.count).trimmingCharacters(in: .whitespaces)
-                // Summonbar keys win over Raycast ones.
-                if !key.isEmpty, prefix == "@summonbar." || meta[key] == nil { meta[key] = value }
-            }
+            guard let range = line.range(of: "@summonbar.") else { continue }
+            let rest = line[range.upperBound...]
+            let key = String(rest.prefix { $0.isLetter || $0.isNumber })
+            if !key.isEmpty { meta[key] = rest.dropFirst(key.count).trimmingCharacters(in: .whitespaces) }
         }
         guard let title = meta["title"], !title.isEmpty, let command = command(for: url, firstLine: lines.first) else { return nil }
+        // Scripts written for the old output modes (silent, fullOutput, …) aren't prompts; skip them.
+        if let mode = meta["mode"], !mode.isEmpty, mode != "agent" { return nil }
 
-        let dir = url.deletingLastPathComponent()
-        let arguments = (1...3).compactMap { meta["argument\($0)"].flatMap(parseArgument) }
-        let mode = meta["mode"].flatMap { ExtensionMode(rawValue: $0) } ?? .fullOutput
         return Extension(
             url: url, title: title,
             description: meta["description"].flatMap { $0.isEmpty ? nil : $0 },
-            packageName: meta["packageName"].flatMap { $0.isEmpty ? nil : $0 },
-            icon: resolveIcon(meta["icon"], dir: dir),
-            mode: mode, arguments: arguments,
-            projectScoped: meta["scope"]?.lowercased() == "project",
-            currentDirectory: meta["currentDirectoryPath"].map { path in
-                let expanded = Config.expand(path)
-                return expanded.hasPrefix("/") ? URL(fileURLWithPath: expanded, isDirectory: true)
-                    : dir.appendingPathComponent(expanded, isDirectory: true).standardizedFileURL
-            },
+            icon: resolveIcon(meta["icon"], dir: url.deletingLastPathComponent()),
+            arguments: (1...3).compactMap { meta["argument\($0)"].flatMap(parseArgument) },
             needsConfirmation: meta["needsConfirmation"]?.lowercased() == "true",
-            refreshTime: meta["refreshTime"].flatMap(parseInterval),
             agentId: meta["agent"].flatMap { $0.isEmpty ? nil : $0 },
             command: command)
     }
@@ -127,18 +92,14 @@ enum ExtensionCatalog {
 
     private static func parseArgument(_ json: String) -> ExtensionArgument? {
         guard let obj = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else { return nil }
-        let type = (obj["type"] as? String)?.lowercased()
         let options = (obj["data"] as? [[String: Any]] ?? []).compactMap { item -> (String, String)? in
             guard let value = item["value"] as? String else { return nil }
             return ((item["title"] as? String) ?? value, value)
         }
-        let kind: ExtensionArgument.Kind
-        if type == "dropdown", !options.isEmpty { kind = .dropdown }
-        else if type == "password" || obj["secure"] as? Bool == true { kind = .password }
-        else { kind = .text }
-        return ExtensionArgument(kind: kind, placeholder: obj["placeholder"] as? String ?? "Value",
+        let isDropdown = (obj["type"] as? String)?.lowercased() == "dropdown" && !options.isEmpty
+        return ExtensionArgument(kind: isDropdown ? .dropdown : .text,
+                                 placeholder: obj["placeholder"] as? String ?? "Value",
                                  optional: obj["optional"] as? Bool ?? false,
-                                 percentEncoded: obj["percentEncoded"] as? Bool ?? false,
                                  options: options)
     }
 
@@ -151,38 +112,14 @@ enum ExtensionCatalog {
         return expanded.hasPrefix("/") ? expanded : dir.appendingPathComponent(expanded).path
     }
 
-    /// Raycast style: `10s`, `5m`, `1h`, `1d`.
-    private static func parseInterval(_ raw: String) -> TimeInterval? {
-        guard let unit = raw.last, let value = Double(raw.dropLast()) else { return nil }
-        switch unit {
-        case "s": return max(value, 10)
-        case "m": return value * 60
-        case "h": return value * 3600
-        case "d": return value * 86400
-        default: return nil
-        }
-    }
-
     private static func writeExamples() {
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let examples = [
-            ("git-status.sh", """
-            #!/bin/bash
-            # @summonbar.title Git Status
-            # @summonbar.description Branch, changes and recent commits
-            # @summonbar.scope project
-            # @summonbar.mode fullOutput
-            # @summonbar.icon arrow.triangle.branch
-
-            git status --short --branch && echo && git log --oneline -10
-            """),
-            ("explain-diff.sh", """
+            ("review-diff.sh", """
             #!/bin/bash
             # @summonbar.title Review Uncommitted Changes
-            # @summonbar.description Ask the default agent to review git diff
-            # @summonbar.scope project
-            # @summonbar.mode agent
+            # @summonbar.description Ask the agent to review git diff
             # @summonbar.icon checkmark.seal
             # @summonbar.argument1 { "type": "text", "placeholder": "Focus (optional)", "optional": true }
 
@@ -192,14 +129,31 @@ enum ExtensionCatalog {
             git diff HEAD | head -c 60000
             echo '```'
             """),
-            ("search-github.sh", """
+            ("commit-message.sh", """
             #!/bin/bash
-            # @summonbar.title Search GitHub
-            # @summonbar.mode silent
-            # @summonbar.icon 🔎
-            # @summonbar.argument1 { "type": "text", "placeholder": "Query", "percentEncoded": true }
+            # @summonbar.title Write Commit Message
+            # @summonbar.description Draft a commit message for the staged changes
+            # @summonbar.icon text.badge.checkmark
 
-            open "https://github.com/search?q=$1"
+            echo "Write a concise commit message for these staged changes. Don't commit, just print it."
+            echo
+            echo '```diff'
+            git diff --cached | head -c 60000
+            echo '```'
+            """),
+            ("fix-tests.sh", """
+            #!/bin/bash
+            # @summonbar.title Fix Failing Tests
+            # @summonbar.description Run the tests and hand the failures to the agent
+            # @summonbar.icon wrench.and.screwdriver
+            # @summonbar.argument1 { "type": "text", "placeholder": "Test command", "optional": true }
+
+            cmd="${1:-npm test}"
+            echo "Running \\`$cmd\\` fails. Find the cause and fix it, then run it again to confirm."
+            echo
+            echo '```'
+            eval "$cmd" 2>&1 | tail -c 30000
+            echo '```'
             """),
         ]
         for (name, body) in examples {
@@ -210,12 +164,12 @@ enum ExtensionCatalog {
     }
 }
 
-/// One execution of an extension script, with its output captured.
+/// One execution of an extension script, with its output (the prompt) captured.
 @MainActor
 final class ExtensionRun: ObservableObject {
     let ext: Extension
+    let project: Project
     let arguments: [String]
-    let directory: URL
     let environment: [String: String]
 
     @Published private(set) var output = ""
@@ -229,18 +183,19 @@ final class ExtensionRun: ObservableObject {
     private var exited = false
     private static let maxOutput = 200_000
 
-    init(ext: Extension, arguments: [String], directory: URL, environment: [String: String]) {
+    init(ext: Extension, project: Project, arguments: [String], environment: [String: String]) {
         self.ext = ext
+        self.project = project
         self.arguments = arguments
-        self.directory = directory
         self.environment = environment
     }
 
     var isRunning: Bool { status == .running }
 
-    /// Last non-empty line, for footers and inline subtitles.
-    var lastLine: String? {
-        output.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) }
+    /// The prompt to send, once the script has finished cleanly.
+    var prompt: String? {
+        let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return status == .done && !text.isEmpty ? text : nil
     }
 
     func start() {
@@ -248,7 +203,7 @@ final class ExtensionRun: ObservableObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ext.command[0])
         process.arguments = Array(ext.command.dropFirst()) + arguments
-        process.currentDirectoryURL = directory
+        process.currentDirectoryURL = project.url
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         let out = Pipe(), err = Pipe()

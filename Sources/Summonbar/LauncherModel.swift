@@ -24,8 +24,11 @@ enum Screen {
     case run(AgentRun)
     case runs
     /// Collects extension arguments one at a time; with all collected it asks to confirm.
-    case argument(Extension, Project?, [String])
+    case argument(Extension, Project, [String])
+    /// The prompt an extension built, before it goes to the agent (preview, or a failed script).
     case output(ExtensionRun)
+    /// Takes the arguments for a project's Claude Code command or skill.
+    case slash(SlashCommand, Project)
 }
 
 @MainActor
@@ -51,7 +54,8 @@ final class LauncherModel: ObservableObject {
     private(set) var projects: [Project] = []
     private(set) var extensions: [Extension] = []
     private var activeExtensionRuns: [ExtensionRun] = []
-    private var inlineOutputs: [String: (text: String, date: Date)] = [:]
+    /// Per-project `.claude` commands and skills, read again on reload and each time the launcher opens.
+    private var slashCache: [URL: [SlashCommand]] = [:]
     private var usage = Store.loadUsage()
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
@@ -76,14 +80,14 @@ final class LauncherModel: ObservableObject {
     var isRoot: Bool { frames.count == 1 }
     var selectedItem: ListItem? { items.indices.contains(selection) ? items[selection] : nil }
     var defaultAgent: Agent? { agents.first }
+    /// Project commands and skills are Claude Code's, so they always go to it.
+    var claudeAgent: Agent? { agents.first { $0.id == "claude" } }
     var runningCount: Int { runs.filter(\.isRunning).count }
 
     private var pendingArgument: ExtensionArgument? {
         guard case .argument(let ext, _, let values) = screen, values.count < ext.arguments.count else { return nil }
         return ext.arguments[values.count]
     }
-
-    var isSecureInput: Bool { pendingArgument?.kind == .password }
 
     var placeholder: String {
         switch screen {
@@ -95,7 +99,10 @@ final class LauncherModel: ObservableObject {
         case .argument(let ext, _, _):
             guard let arg = pendingArgument else { return "Press ↵ to run \(ext.title)" }
             return arg.kind == .dropdown ? "Choose \(arg.placeholder)…" : arg.placeholder + (arg.optional ? " (optional)" : "")
-        case .output(let run): return run.isRunning ? "\(run.ext.title) is running…" : "Press ↵ to run again"
+        case .output(let run):
+            if run.isRunning { return "\(run.ext.title) is building the prompt…" }
+            return run.prompt != nil ? "Press ↵ to send to \(agent(for: run.ext)?.name ?? "the agent")" : "Press ↵ to run again"
+        case .slash(let cmd, _): return cmd.argumentHint.map { "Arguments: \($0)" } ?? "Arguments for \(cmd.invocation) (optional)"
         }
     }
 
@@ -106,8 +113,9 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): return p.name
         case .run(let run): return "\(run.agentName) · \(run.projectName)"
         case .runs: return "Agent Runs"
-        case .argument(let ext, let project, _): return ext.projectScoped && project != nil ? "\(ext.title) · \(project!.name)" : ext.title
-        case .output(let run): return run.ext.title
+        case .argument(let ext, let project, _): return "\(ext.title) · \(project.name)"
+        case .output(let run): return "\(run.ext.title) · \(run.project.name)"
+        case .slash(let cmd, let project): return "\(cmd.invocation) · \(project.name)"
         }
     }
 
@@ -120,7 +128,8 @@ final class LauncherModel: ObservableObject {
             return h
         }
         if case .output(let run) = screen {
-            return [run.isRunning ? ("Stop", "⌘.") : ("Run Again", "↵"), ("Copy Output", "⌘↵"), ("Back", "esc")]
+            let primary = run.isRunning ? ("Stop", "⌘.") : (run.prompt != nil ? ("Send to Agent", "↵") : ("Run Again", "↵"))
+            return [primary, ("Copy Prompt", "⌘↵"), ("Back", "esc")]
         }
         guard let item = selectedItem else { return [("Back", "esc")] }
         var h = [(item.primaryLabel, "↵")]
@@ -136,12 +145,13 @@ final class LauncherModel: ObservableObject {
         agents = AgentCatalog.detect(config: config)
         projects = ProjectScanner.scan(root: config.workspacesRoot)
         extensions = ExtensionCatalog.scan(config: config)
+        slashCache = [:]
     }
 
     func didShow() {
         if isRoot {
             projects = ProjectScanner.scan(root: config.workspacesRoot)
-            refreshInlineExtensions()
+            slashCache = [:]
             refresh()
         }
         focusTick += 1
@@ -200,13 +210,17 @@ final class LauncherModel: ObservableObject {
 
     func performPrimary() {
         if case .run(let run) = screen { sendFollowUp(run); return }
-        if case .output(let run) = screen { if !run.isRunning { launch(run) }; return }
+        if case .output(let run) = screen {
+            if run.isRunning { return }
+            if let prompt = run.prompt { sendToAgent(run.ext, run.project, prompt) } else { launch(run) }
+            return
+        }
         selectedItem?.primary()
     }
 
     func performSecondary() {
         if case .run(let run) = screen { continueInTerminal(run); return }
-        if case .output(let run) = screen { copy(run.output, label: "output"); return }
+        if case .output(let run) = screen { copy(run.output, label: "prompt"); return }
         guard let item = selectedItem else { return }
         (item.secondary ?? item.primary)()
     }
@@ -218,6 +232,10 @@ final class LauncherModel: ObservableObject {
 
     func enterSelected() {
         if let item = selectedItem, item.id.hasPrefix("x:") { item.primary(); return }
+        if let item = selectedItem, item.id.hasPrefix("s:"), let addArguments = item.actions?().first {
+            addArguments.primary()
+            return
+        }
         guard case .root = screen, let item = selectedItem, item.id.hasPrefix("p:"),
               let project = projects.first(where: { "p:" + $0.id == item.id }) else { return }
         push(.prompt(project))
@@ -268,6 +286,7 @@ final class LauncherModel: ObservableObject {
         case .runs: items = filter(runs.map(runItem))
         case .argument(let ext, let project, let values): items = argumentItems(ext, project, values)
         case .output: items = []
+        case .slash(let cmd, let project): items = slashArgumentItems(cmd, project)
         }
         if selection >= items.count { selection = max(items.count - 1, 0) }
     }
@@ -305,7 +324,6 @@ final class LauncherModel: ObservableObject {
         if q.isEmpty {
             out += runs.prefix(3).map(runItem).map { var i = $0; i.section = "Recent Runs"; return i }
             out += sortedProjects().map(projectItem)
-            out += extensions.filter { !$0.projectScoped }.map { extensionItem($0, project: contextProject) }
             out += commandItems()
             return out
         }
@@ -313,9 +331,10 @@ final class LauncherModel: ObservableObject {
         let matches = projects.compactMap { p in Fuzzy.score(q, p.name).map { (p, $0) } }
             .sorted { $0.1 > $1.1 }.map { projectItem($0.0) }
         let asks = askItems(q)
-        let found = matches + filter(extensions.compactMap { ext in
-            ext.projectScoped && contextProject == nil ? nil : extensionItem(ext, project: contextProject, showProject: true)
-        })
+        let found = matches + filter(contextProject.map { project in
+            extensions.map { extensionItem($0, project: project, showProject: true) }
+                + slashItems(project, showProject: true)
+        } ?? [])
         out += found.isEmpty ? asks : found + asks
         if projects.allSatisfy({ $0.name.lowercased() != q.lowercased() }), Self.slug(q) != nil, !q.contains(" ") {
             out.append(createItem(q))
@@ -354,6 +373,7 @@ final class LauncherModel: ObservableObject {
                                 primary: { [unowned self] in launch(agent, p, prompt: nil) }))
         }
         out += projectExtensionItems(p)
+        out += slashItems(p)
         out += utilityItems(p)
         return out
     }
@@ -395,7 +415,16 @@ final class LauncherModel: ObservableObject {
         }
         out += runs.filter { $0.projectURL == p.url }.prefix(5).map { var i = runItem($0); i.section = "Previous Runs"; return i }
         out += projectExtensionItems(p)
+        out += slashItems(p)
         out += utilityItems(p)
+        // Typing `/name args` puts the matching commands and skills first.
+        if prompt.hasPrefix("/") {
+            let parts = prompt.dropFirst().split(separator: " ", maxSplits: 1)
+            let token = parts.first.map(String.init) ?? ""
+            let args = parts.count > 1 ? String(parts[1]) : ""
+            let matches = slashCommands(p).filter { token.isEmpty || Fuzzy.score(token, $0.name) != nil }
+            out.insert(contentsOf: matches.compactMap { slashItem($0, p, args: args) }, at: 0)
+        }
         if agents.isEmpty {
             out.insert(ListItem(id: "noagents", section: "Run Here", title: "No coding agents found on PATH",
                                 subtitle: "Install claude, codex, gemini, opencode, cursor-agent or aider, then ⌘R",
@@ -540,21 +569,24 @@ final class LauncherModel: ObservableObject {
 
     // MARK: - Extensions
 
-    private func extensionItem(_ ext: Extension, project: Project?, showProject: Bool = false) -> ListItem {
-        var subtitle = ext.description
-        if ext.mode == .inline, let output = inlineOutputs[ext.id]?.text { subtitle = output }
-        if showProject, ext.projectScoped, let project { subtitle = "in \(project.name) · ⌘K on a project to pick another" }
-        return ListItem(
-            id: "x:\(ext.id)", section: "Extensions", title: ext.title, subtitle: subtitle,
-            icon: ext.icon, tint: .teal, accessory: ext.packageName,
-            primaryLabel: ext.mode == .terminal ? "Run in \(config.terminalName)" : "Run",
+    private func agent(for ext: Extension) -> Agent? {
+        agents.first { $0.id == ext.agentId } ?? defaultAgent
+    }
+
+    private func extensionItem(_ ext: Extension, project: Project, showProject: Bool = false) -> ListItem {
+        ListItem(
+            id: "x:\(ext.id)", section: "Extensions", title: ext.title,
+            subtitle: showProject ? "in \(project.name) · ⌘K on a project to pick another" : ext.description,
+            icon: ext.icon, tint: .teal,
+            primaryLabel: "Ask \(agent(for: ext)?.name ?? "Agent")",
             primary: { [unowned self] in runExtension(ext, project) },
-            secondaryLabel: "Edit Script",
-            secondary: { [unowned self] in TerminalLauncher.openInEditor(ext.url, editor: config.editor); finish() },
+            secondaryLabel: "Preview Prompt",
+            secondary: { [unowned self] in runExtension(ext, project, preview: true) },
             actions: { [unowned self] in
                 [
-                    ListItem(id: "xa:term", section: ext.title, title: "Run in \(config.terminalName)", icon: "terminal", tint: .green,
-                             primary: { [unowned self] in runExtension(ext, project, forceTerminal: true) }),
+                    ListItem(id: "xa:preview", section: ext.title, title: "Preview Prompt", subtitle: "Run the script without sending it",
+                             icon: "eye", tint: .teal,
+                             primary: { [unowned self] in runExtension(ext, project, preview: true) }),
                     ListItem(id: "xa:edit", section: ext.title, title: "Edit Script in \(config.editor)", subtitle: ext.url.tildePath,
                              icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
                              primary: { [unowned self] in TerminalLauncher.openInEditor(ext.url, editor: config.editor); finish() }),
@@ -565,10 +597,10 @@ final class LauncherModel: ObservableObject {
     }
 
     private func projectExtensionItems(_ p: Project) -> [ListItem] {
-        extensions.filter(\.projectScoped).map { extensionItem($0, project: p) }
+        extensions.map { extensionItem($0, project: p) }
     }
 
-    private func argumentItems(_ ext: Extension, _ project: Project?, _ values: [String]) -> [ListItem] {
+    private func argumentItems(_ ext: Extension, _ project: Project, _ values: [String]) -> [ListItem] {
         guard values.count < ext.arguments.count else {
             return [ListItem(id: "x:confirm", section: "Confirm", title: "Run \(ext.title)", subtitle: ext.description,
                              icon: ext.icon, tint: .orange, primaryLabel: "Run",
@@ -577,10 +609,7 @@ final class LauncherModel: ObservableObject {
         let arg = ext.arguments[values.count]
         let step = ext.arguments.count > 1 ? " · \(values.count + 1) of \(ext.arguments.count)" : ""
         let isLast = values.count + 1 == ext.arguments.count
-        let submit: (String) -> Void = { [unowned self] raw in
-            let value = arg.percentEncoded ? raw.addingPercentEncoding(withAllowedCharacters: Self.uriComponentAllowed) ?? raw : raw
-            runExtension(ext, project, values: values + [value])
-        }
+        let submit: (String) -> Void = { [unowned self] value in runExtension(ext, project, values: values + [value]) }
         if arg.kind == .dropdown {
             return filter(arg.options.enumerated().map { index, option in
                 ListItem(id: "x:opt:\(index)", section: arg.placeholder + step, title: option.title,
@@ -588,7 +617,7 @@ final class LauncherModel: ObservableObject {
                          primaryLabel: isLast ? "Run" : "Next", primary: { submit(option.value) })
             })
         }
-        let value = arg.kind == .password ? query : query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let title: String
         if value.isEmpty && !arg.optional { title = "Type \(arg.placeholder.lowercased()) above" }
         else if isLast { title = "Run \(ext.title)" }
@@ -602,45 +631,28 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Collects missing arguments and confirmation, then runs the extension.
-    private func runExtension(_ ext: Extension, _ project: Project?, values: [String] = [],
-                              confirmed: Bool = false, forceTerminal: Bool = false) {
-        if values.count < ext.arguments.count || (ext.needsConfirmation && !confirmed) {
+    /// With `preview`, the prompt is shown instead of being sent.
+    private func runExtension(_ ext: Extension, _ project: Project, values: [String] = [],
+                              confirmed: Bool = false, preview: Bool = false) {
+        if values.count < ext.arguments.count || (ext.needsConfirmation && !confirmed && !preview) {
             let next = Screen.argument(ext, project, values)
             if case .argument = screen { replaceTop(next) } else { push(next) }
             return
         }
         if case .argument = screen { back() }
-        execute(ext, project, values, mode: forceTerminal ? .terminal : ext.mode)
-    }
-
-    private func execute(_ ext: Extension, _ project: Project?, _ values: [String], mode: ExtensionMode, background: Bool = false) {
-        if let project, ext.projectScoped { markUsed(project) }
-        let directory = (ext.projectScoped ? project?.url : nil) ?? ext.currentDirectory ?? ext.url.deletingLastPathComponent()
-        var env: [String: String] = ["SUMMONBAR_WORKSPACES": config.workspacesRoot.path]
-        if let project {
-            env["SUMMONBAR_PROJECT_DIR"] = project.url.path
-            env["SUMMONBAR_PROJECT_NAME"] = project.name
-        }
-
-        if mode == .terminal {
-            let command = ["/usr/bin/env"] + env.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" } + ext.command + values
-            TerminalLauncher.open(command: command, in: directory, terminal: config.terminal)
-            finish()
-            return
-        }
-
-        let run = ExtensionRun(ext: ext, arguments: values, directory: directory,
+        markUsed(project)
+        let env = [
+            "SUMMONBAR_WORKSPACES": config.workspacesRoot.path,
+            "SUMMONBAR_PROJECT_DIR": project.url.path,
+            "SUMMONBAR_PROJECT_NAME": project.name,
+        ]
+        let run = ExtensionRun(ext: ext, project: project, arguments: values,
                                environment: Shell.env.merging(env) { _, ours in ours })
         run.onFinish = { [unowned self] run in
             activeExtensionRuns.removeAll { $0 === run }
-            extensionFinished(run, project: project, mode: mode, background: background)
+            extensionFinished(run, preview: preview)
         }
-        switch mode {
-        case .fullOutput: push(.output(run))
-        case .silent: finish()
-        case .agent, .compact, .inline: if !background { flash("Running \(ext.title)…") }
-        case .terminal: break
-        }
+        if preview { push(.output(run)) } else { flash("Running \(ext.title)…") }
         launch(run)
     }
 
@@ -649,46 +661,79 @@ final class LauncherModel: ObservableObject {
         run.start()
     }
 
-    private func extensionFinished(_ run: ExtensionRun, project: Project?, mode: ExtensionMode, background: Bool) {
-        let title = run.ext.title
-        switch mode {
-        case .fullOutput, .terminal:
-            break
-        case .silent, .compact:
-            if run.status == .failed { flash("\(title) failed: \(run.lastLine ?? "")") }
-            else if mode == .compact { flash(run.lastLine ?? "\(title) finished") }
-        case .inline:
-            inlineOutputs[run.ext.id] = (run.lastLine ?? "", Date())
-            if !background { flash(run.status == .failed ? "\(title) failed: \(run.lastLine ?? "")" : run.lastLine ?? "\(title) finished") }
-            if case .root = screen { refresh() }
-        case .agent:
-            let prompt = run.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard run.status == .done, !prompt.isEmpty else {
-                if run.status == .failed { push(.output(run)) }
-                return
-            }
-            guard let agent = agents.first(where: { $0.id == run.ext.agentId }) ?? defaultAgent,
-                  let target = project ?? contextProject else {
-                flash("No coding agent or project to send \(title) to")
-                return
-            }
-            if case .output = screen { back() }
-            startRun(agent, target, prompt)
+    private func extensionFinished(_ run: ExtensionRun, preview: Bool) {
+        // A preview stays on screen; ↵ there sends the prompt.
+        if case .output(let shown) = screen, shown === run { return }
+        guard !preview else { return }
+        guard let prompt = run.prompt else {
+            if run.status == .failed { push(.output(run)) }
+            else if run.status == .done { flash("\(run.ext.title) printed nothing to send") }
+            return
         }
+        sendToAgent(run.ext, run.project, prompt)
     }
 
-    /// Re-runs inline extensions whose `refreshTime` has passed, so their subtitles stay fresh.
-    private func refreshInlineExtensions() {
-        let now = Date()
-        for ext in extensions where ext.mode == .inline && !ext.projectScoped && ext.arguments.isEmpty {
-            guard let interval = ext.refreshTime,
-                  !activeExtensionRuns.contains(where: { $0.ext.id == ext.id }) else { continue }
-            if let last = inlineOutputs[ext.id], now.timeIntervalSince(last.date) < interval { continue }
-            execute(ext, contextProject, [], mode: .inline, background: true)
-        }
+    private func sendToAgent(_ ext: Extension, _ project: Project, _ prompt: String) {
+        guard let agent = agent(for: ext) else { flash("No coding agent to send \(ext.title) to"); return }
+        if case .output = screen { back() }
+        startRun(agent, project, prompt)
     }
 
-    private static let uriComponentAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    // MARK: - Claude Code commands and skills
+
+    private func slashCommands(_ p: Project) -> [SlashCommand] {
+        if let cached = slashCache[p.url] { return cached }
+        let found = SlashCommandScanner.scan(project: p.url)
+        slashCache[p.url] = found
+        return found
+    }
+
+    private func slashItems(_ p: Project, showProject: Bool = false) -> [ListItem] {
+        slashCommands(p).compactMap { slashItem($0, p, showProject: showProject) }
+    }
+
+    private func slashItem(_ cmd: SlashCommand, _ p: Project, args: String = "", showProject: Bool = false) -> ListItem? {
+        guard let claude = claudeAgent else { return nil }
+        let prompt = args.isEmpty ? cmd.invocation : "\(cmd.invocation) \(args)"
+        let wantsArguments = args.isEmpty && cmd.argumentHint != nil
+        return ListItem(
+            id: "s:\(cmd.id)", section: cmd.kind == .skill ? "Claude Skills" : "Claude Commands", title: prompt,
+            subtitle: showProject ? "in \(p.name) · ⌘K on a project to pick another" : cmd.description,
+            icon: cmd.kind == .skill ? "wand.and.stars" : "slash.circle", tint: .purple, accessory: args.isEmpty ? cmd.argumentHint : nil,
+            primaryLabel: wantsArguments ? "Add Arguments" : "Ask \(claude.name)",
+            primary: { [unowned self] in wantsArguments ? push(.slash(cmd, p)) : startRun(claude, p, prompt) },
+            secondaryLabel: "Open in \(config.terminalName)",
+            secondary: { [unowned self] in launch(claude, p, prompt: prompt) },
+            actions: { [unowned self] in
+                [
+                    ListItem(id: "sa:args", section: cmd.invocation, title: "Run with Arguments…", icon: "text.cursor", tint: .purple,
+                             primary: { [unowned self] in push(.slash(cmd, p)) }),
+                    ListItem(id: "sa:term", section: cmd.invocation, title: "Open in \(config.terminalName)", icon: "terminal", tint: .green,
+                             primary: { [unowned self] in launch(claude, p, prompt: prompt) }),
+                    ListItem(id: "sa:edit", section: cmd.invocation, title: "Edit in \(config.editor)", subtitle: cmd.url.tildePath,
+                             icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
+                             primary: { [unowned self] in TerminalLauncher.openInEditor(cmd.url, editor: config.editor); finish() }),
+                    ListItem(id: "sa:finder", section: cmd.invocation, title: "Reveal in Finder", icon: "finder",
+                             primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([cmd.url]); finish() }),
+                ]
+            })
+    }
+
+    private func slashArgumentItems(_ cmd: SlashCommand, _ p: Project) -> [ListItem] {
+        let args = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var item = slashItem(cmd, p, args: args) else {
+            return [ListItem(id: "s:noclaude", section: cmd.invocation, title: "Claude Code isn't on PATH",
+                             icon: "exclamationmark.triangle", tint: .orange, primary: {})]
+        }
+        // Here ↵ always runs, even with no arguments typed.
+        let prompt = item.title
+        item.section = cmd.argumentHint ?? "Arguments"
+        item.subtitle = cmd.description
+        item.primaryLabel = "Ask \(claudeAgent?.name ?? "Claude Code")"
+        item.primary = { [unowned self] in if let claude = claudeAgent { startRun(claude, p, prompt) } }
+        item.actions = nil
+        return [item]
+    }
 
     private func reloadAndReport() {
         reload()

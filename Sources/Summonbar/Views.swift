@@ -30,16 +30,10 @@ struct LauncherView: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            Group {
-                if model.isSecureInput {
-                    SecureField(model.placeholder, text: $model.query)
-                } else {
-                    TextField(model.placeholder, text: $model.query)
-                }
-            }
-            .textFieldStyle(.plain)
-            .font(.system(size: 20))
-            .focused($focused)
+            TextField(model.placeholder, text: $model.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 20))
+                .focused($focused)
             if case .run(let run) = model.screen {
                 RunStatusBadge(run: run)
             } else if case .output(let run) = model.screen {

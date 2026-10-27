@@ -28,7 +28,8 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Hand off to the terminal.** ⌘T moves an inline conversation into your terminal (`claude --resume`, `codex resume`). ⌘↵ on a project opens the agent there right away.
 - **New projects in one line.** `new my-app: build a todo app` creates `~/Workspaces/my-app`, runs `git init`, and pre-fills the prompt.
 - **Background runs.** Hide the launcher and keep working. The menu bar shows how many agents are running.
-- **Extensions.** Drop in shell scripts; Raycast Script Commands work as-is.
+- **Your project's Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline.
+- **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
 
 <p align="center">
@@ -119,46 +120,60 @@ The file itself, `~/.config/summonbar/config.json`, is created on first launch:
 
 - `terminal`: `ghostty`, `terminal`, `iterm`, or any app name that can open `.command` files.
 - `headlessArgs` apply to inline runs. By default Claude Code can edit files but asks before running anything else, and Codex is sandboxed to the workspace. Set `"disabled": true` on an agent to hide it.
-- `extensionDirectories` (optional): extra folders to load extensions from, e.g. a clone of [raycast/script-commands](https://github.com/raycast/script-commands).
+- `extensionDirectories` (optional): extra folders to load extensions from, e.g. a team repo of shared prompts.
 - After you edit the file by hand, use **Reload Config & Hotkey** in the menu bar.
 
 Projects are found by scanning `workspacesRoot`. If a top-level folder holds projects instead of being one (for example `~/Workspaces/acme/*`), its subfolders are listed as projects.
 
 ## Extensions
 
-An extension is a script in `~/.config/summonbar/extensions/` (any language, with a shebang) whose header comments describe it. A few examples are created on first launch. Raycast Script Commands work as-is: `@raycast.*` keys are read too, and `@summonbar.*` keys win when both are present.
+An extension is a reusable prompt for a coding agent: a script in `~/.config/summonbar/extensions/` (any language, with a shebang) that runs inside a project and prints the task. Whatever it prints is sent to the agent as an inline run. A few examples are created on first launch: review uncommitted changes, write a commit message, fix failing tests.
 
 ```bash
 #!/bin/bash
-# @summonbar.title Search GitHub
-# @summonbar.mode silent
-# @summonbar.icon 🔎
-# @summonbar.argument1 { "type": "text", "placeholder": "Query", "percentEncoded": true }
+# @summonbar.title Review Uncommitted Changes
+# @summonbar.icon checkmark.seal
+# @summonbar.argument1 { "type": "text", "placeholder": "Focus (optional)", "optional": true }
 
-open "https://github.com/search?q=$1"
+echo "Review my uncommitted changes for bugs and risky edits. ${1:+Focus on: $1}"
+echo '```diff'
+git diff HEAD | head -c 60000
+echo '```'
 ```
 
 | Key | Values |
 |---|---|
 | `title` | Required. Name in the list |
-| `mode` | `fullOutput` (default, streams output into the launcher), `compact` (last line in the footer), `silent` (hide and run), `inline` (last line becomes the subtitle; re-runs every `refreshTime`), `terminal` (run interactively in your terminal), `agent` (send the script's output as a prompt to a coding agent) |
-| `scope` | `project`: runs inside a project and shows in its ⌘K actions and prompt screen. Otherwise it's global and listed on the root screen |
-| `argument1`…`argument3` | JSON: `type` (`text`, `password`, `dropdown` with `data: [{"title","value"}]`), `placeholder`, `optional`, `percentEncoded`. Asked for one at a time |
+| `agent` | Agent id such as `codex` (default: `defaultAgent`) |
+| `argument1`…`argument3` | JSON: `type` (`text`, or `dropdown` with `data: [{"title","value"}]`), `placeholder`, `optional`. Asked for one at a time |
 | `icon` | SF Symbol name, emoji, or an image path relative to the script |
-| `description`, `packageName` | Subtitle and accessory |
+| `description` | Subtitle |
 | `needsConfirmation` | `true` asks before running |
-| `currentDirectoryPath` | Working directory for global extensions (default: the script's folder) |
-| `refreshTime` | For `inline`: `10s`, `5m`, `1h`, `1d` |
-| `agent` | For `agent`: agent id such as `codex` (default: `defaultAgent`) |
 
-Scripts get these environment variables:
-- `SUMMONBAR_PROJECT_DIR` and `SUMMONBAR_PROJECT_NAME`: the project it ran on, or for global extensions the one you used last.
+Scripts written for other output modes (`@summonbar.mode` set to anything but `agent`) are skipped.
+
+Extensions show up in a project's ⌘K actions and prompt screen, and in root search for the project you used last. Scripts run in the project folder and get these environment variables:
+- `SUMMONBAR_PROJECT_DIR` and `SUMMONBAR_PROJECT_NAME`.
 - `SUMMONBAR_WORKSPACES`.
 
 Keys on an extension:
-- ⌘↵ edits the script, and ⌘K offers running it in the terminal.
-- In `fullOutput` mode, ↵ runs it again, ⌘↵ copies the output and ⌘. stops it.
-- ⌘R picks up new or changed scripts.
+- ↵ runs the script and sends its output to the agent.
+- ⌘↵ previews the prompt first. There, ↵ sends it, ⌘↵ copies it and ⌘. stops the script. A script that fails opens the same preview so you can see why.
+- ⌘K also has Edit Script and Reveal in Finder. ⌘R picks up new or changed scripts.
+
+## Claude Code commands and skills
+
+Summonbar reads each project's own Claude Code setup and lists it next to the extensions:
+- custom commands: every `.md` file in `.claude/commands/` (subfolders too), named after the file;
+- skills: `.claude/skills/<name>/SKILL.md`, skipped when the front matter says `user-invocable: false`.
+
+They show up in a project's ⌘K actions and prompt screen, and in root search for the project you used last. `description` and `argument-hint` from the front matter become the subtitle and accessory.
+
+- ↵ sends `/name` to Claude Code as an inline run. If the command has an `argument-hint`, Summonbar asks for the arguments first.
+- ⌘↵ opens it in the terminal instead. ⌘K also has Run with Arguments, Edit and Reveal in Finder. Tab goes straight to the arguments.
+- On the prompt screen, typing `/` lists the project's commands and skills; `/plan next sprint` runs `/plan` with `next sprint`.
+
+They always run with Claude Code, whatever `defaultAgent` is, and are hidden when `claude` isn't on your `PATH`. The files are read again each time the launcher opens.
 
 ## How it works
 
@@ -187,9 +202,10 @@ Sources/Summonbar/
   Views.swift          SwiftUI UI
   Settings.swift       Settings window (General, Agents)
   AgentRun.swift       headless agent process + stream-json / JSONL parsing
-  Extensions.swift     script extensions: metadata parsing, catalog, runs
+  Extensions.swift     prompt extensions: metadata parsing, catalog, runs
   Agents.swift         agent catalog and command lines
   Projects.swift       workspace scanner, fuzzy match
+  SlashCommands.swift  a project's .claude commands and skills
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
   Config.swift, Store.swift
