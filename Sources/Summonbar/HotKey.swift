@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 
 /// System-wide hotkey via Carbon's RegisterEventHotKey (no Accessibility permission needed).
@@ -59,7 +60,23 @@ final class HotKey {
         let parts = spec.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }
         let symbols: [String: String] = ["ctrl": "⌃", "control": "⌃", "opt": "⌥", "option": "⌥", "alt": "⌥",
                                          "shift": "⇧", "cmd": "⌘", "command": "⌘", "space": "Space"]
-        return parts.map { symbols[$0] ?? $0.uppercased() }.joined()
+        // Show modifiers in the standard macOS order (⌃⌥⇧⌘) whatever order the spec uses.
+        let order = ["⌃", "⌥", "⇧", "⌘"]
+        let mapped = parts.map { symbols[$0] ?? $0.uppercased() }
+        return order.filter(mapped.contains).joined() + mapped.filter { !order.contains($0) }.joined()
+    }
+
+    /// Builds a spec like "cmd+shift+space" from a key press, or nil if the key
+    /// isn't supported or no modifier is held.
+    static func spec(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> String? {
+        guard let key = keyCodes.first(where: { $0.value == UInt32(keyCode) })?.key else { return nil }
+        var parts: [String] = []
+        if modifiers.contains(.control) { parts.append("ctrl") }
+        if modifiers.contains(.option) { parts.append("opt") }
+        if modifiers.contains(.shift) { parts.append("shift") }
+        if modifiers.contains(.command) { parts.append("cmd") }
+        guard !parts.isEmpty else { return nil }
+        return (parts + [key]).joined(separator: "+")
     }
 
     private static let keyCodes: [String: UInt32] = [

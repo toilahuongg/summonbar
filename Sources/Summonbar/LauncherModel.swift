@@ -23,6 +23,9 @@ enum Screen {
     case prompt(Project)
     case run(AgentRun)
     case runs
+    /// Collects extension arguments one at a time; with all collected it asks to confirm.
+    case argument(Extension, Project?, [String])
+    case output(ExtensionRun)
 }
 
 @MainActor
@@ -46,11 +49,15 @@ final class LauncherModel: ObservableObject {
     private(set) var config = Config.load()
     private(set) var agents: [Agent] = []
     private(set) var projects: [Project] = []
+    private(set) var extensions: [Extension] = []
+    private var activeExtensionRuns: [ExtensionRun] = []
+    private var inlineOutputs: [String: (text: String, date: Date)] = [:]
     private var usage = Store.loadUsage()
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
 
     var hidePanel: () -> Void = {}
+    var openSettings: () -> Void = {}
     var runsChanged: () -> Void = {}
 
     init() {
@@ -71,6 +78,13 @@ final class LauncherModel: ObservableObject {
     var defaultAgent: Agent? { agents.first }
     var runningCount: Int { runs.filter(\.isRunning).count }
 
+    private var pendingArgument: ExtensionArgument? {
+        guard case .argument(let ext, _, let values) = screen, values.count < ext.arguments.count else { return nil }
+        return ext.arguments[values.count]
+    }
+
+    var isSecureInput: Bool { pendingArgument?.kind == .password }
+
     var placeholder: String {
         switch screen {
         case .root: return "Search projects, or ask an agent…"
@@ -78,6 +92,10 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): return "What should the agent do in \(p.name)?"
         case .run(let run): return run.isRunning ? "\(run.agentName) is working…" : (run.canFollowUp ? "Send a follow-up…" : "This agent can't continue the conversation inline")
         case .runs: return "Search agent runs…"
+        case .argument(let ext, _, _):
+            guard let arg = pendingArgument else { return "Press ↵ to run \(ext.title)" }
+            return arg.kind == .dropdown ? "Choose \(arg.placeholder)…" : arg.placeholder + (arg.optional ? " (optional)" : "")
+        case .output(let run): return run.isRunning ? "\(run.ext.title) is running…" : "Press ↵ to run again"
         }
     }
 
@@ -88,6 +106,8 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): return p.name
         case .run(let run): return "\(run.agentName) · \(run.projectName)"
         case .runs: return "Agent Runs"
+        case .argument(let ext, let project, _): return ext.projectScoped && project != nil ? "\(ext.title) · \(project!.name)" : ext.title
+        case .output(let run): return run.ext.title
         }
     }
 
@@ -98,6 +118,9 @@ final class LauncherModel: ObservableObject {
             if run.agent != nil { h.append(("Continue in \(config.terminalName)", "⌘T")) }
             h.append(("Back", "esc"))
             return h
+        }
+        if case .output(let run) = screen {
+            return [run.isRunning ? ("Stop", "⌘.") : ("Run Again", "↵"), ("Copy Output", "⌘↵"), ("Back", "esc")]
         }
         guard let item = selectedItem else { return [("Back", "esc")] }
         var h = [(item.primaryLabel, "↵")]
@@ -112,11 +135,13 @@ final class LauncherModel: ObservableObject {
         config = Config.load()
         agents = AgentCatalog.detect(config: config)
         projects = ProjectScanner.scan(root: config.workspacesRoot)
+        extensions = ExtensionCatalog.scan(config: config)
     }
 
     func didShow() {
         if isRoot {
             projects = ProjectScanner.scan(root: config.workspacesRoot)
+            refreshInlineExtensions()
             refresh()
         }
         focusTick += 1
@@ -151,6 +176,13 @@ final class LauncherModel: ObservableObject {
         focusTick += 1
     }
 
+    /// Swaps the top screen without growing the stack (next extension argument).
+    private func replaceTop(_ screen: Screen) {
+        frames[frames.count - 1] = Frame(screen: screen)
+        setQuery("")
+        focusTick += 1
+    }
+
     private func resetToRoot() {
         frames = [Frame(screen: .root)]
         setQuery("")
@@ -168,11 +200,13 @@ final class LauncherModel: ObservableObject {
 
     func performPrimary() {
         if case .run(let run) = screen { sendFollowUp(run); return }
+        if case .output(let run) = screen { if !run.isRunning { launch(run) }; return }
         selectedItem?.primary()
     }
 
     func performSecondary() {
         if case .run(let run) = screen { continueInTerminal(run); return }
+        if case .output(let run) = screen { copy(run.output, label: "output"); return }
         guard let item = selectedItem else { return }
         (item.secondary ?? item.primary)()
     }
@@ -183,6 +217,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func enterSelected() {
+        if let item = selectedItem, item.id.hasPrefix("x:") { item.primary(); return }
         guard case .root = screen, let item = selectedItem, item.id.hasPrefix("p:"),
               let project = projects.first(where: { "p:" + $0.id == item.id }) else { return }
         push(.prompt(project))
@@ -192,7 +227,12 @@ final class LauncherModel: ObservableObject {
     func handleKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let cmd = flags.contains(.command)
-        let inRun: Bool = { if case .run = screen { return true } else { return false } }()
+        let inRun: Bool = {
+            switch screen {
+            case .run, .output: return true
+            default: return false
+            }
+        }()
 
         switch event.keyCode {
         case 53: back(); return true                                   // esc
@@ -207,9 +247,12 @@ final class LauncherModel: ObservableObject {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "k": showActions(); return true
         case "t": if case .run(let run) = screen { continueInTerminal(run) }; return true
-        case ".": if case .run(let run) = screen { run.stop() }; return true
-        case ",": openConfig(); return true
-        case "r": reload(); refresh(); flash("Reloaded \(projects.count) projects, \(agents.count) agents"); return true
+        case ".":
+            if case .run(let run) = screen { run.stop() }
+            if case .output(let run) = screen { run.stop() }
+            return true
+        case ",": finish(); openSettings(); return true
+        case "r": reloadAndReport(); return true
         default: return false
         }
     }
@@ -223,6 +266,8 @@ final class LauncherModel: ObservableObject {
         case .prompt(let p): items = promptItems(p)
         case .run: items = []
         case .runs: items = filter(runs.map(runItem))
+        case .argument(let ext, let project, let values): items = argumentItems(ext, project, values)
+        case .output: items = []
         }
         if selection >= items.count { selection = max(items.count - 1, 0) }
     }
@@ -260,6 +305,7 @@ final class LauncherModel: ObservableObject {
         if q.isEmpty {
             out += runs.prefix(3).map(runItem).map { var i = $0; i.section = "Recent Runs"; return i }
             out += sortedProjects().map(projectItem)
+            out += extensions.filter { !$0.projectScoped }.map { extensionItem($0, project: contextProject) }
             out += commandItems()
             return out
         }
@@ -267,7 +313,10 @@ final class LauncherModel: ObservableObject {
         let matches = projects.compactMap { p in Fuzzy.score(q, p.name).map { (p, $0) } }
             .sorted { $0.1 > $1.1 }.map { projectItem($0.0) }
         let asks = askItems(q)
-        out += matches.isEmpty ? asks + matches : matches + asks
+        let found = matches + filter(extensions.compactMap { ext in
+            ext.projectScoped && contextProject == nil ? nil : extensionItem(ext, project: contextProject, showProject: true)
+        })
+        out += found.isEmpty ? asks : found + asks
         if projects.allSatisfy({ $0.name.lowercased() != q.lowercased() }), Self.slug(q) != nil, !q.contains(" ") {
             out.append(createItem(q))
         }
@@ -304,6 +353,7 @@ final class LauncherModel: ObservableObject {
                                 icon: "terminal", tint: .green, primaryLabel: "Open",
                                 primary: { [unowned self] in launch(agent, p, prompt: nil) }))
         }
+        out += projectExtensionItems(p)
         out += utilityItems(p)
         return out
     }
@@ -317,11 +367,7 @@ final class LauncherModel: ObservableObject {
             ListItem(id: "u:finder", section: "Project", title: "Reveal in Finder", icon: "finder",
                      primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([p.url]); finish() }),
             ListItem(id: "u:copy", section: "Project", title: "Copy Path", subtitle: p.url.tildePath, icon: "doc.on.doc",
-                     primary: { [unowned self] in
-                         NSPasteboard.general.clearContents()
-                         NSPasteboard.general.setString(p.url.path, forType: .string)
-                         flash("Copied \(p.url.tildePath)")
-                     }),
+                     primary: { [unowned self] in copy(p.url.path, label: p.url.tildePath) }),
         ]
     }
 
@@ -348,6 +394,7 @@ final class LauncherModel: ObservableObject {
                 primary: { [unowned self] in launch(agent, p, prompt: prompt.isEmpty ? nil : prompt) }))
         }
         out += runs.filter { $0.projectURL == p.url }.prefix(5).map { var i = runItem($0); i.section = "Previous Runs"; return i }
+        out += projectExtensionItems(p)
         out += utilityItems(p)
         if agents.isEmpty {
             out.insert(ListItem(id: "noagents", section: "Run Here", title: "No coding agents found on PATH",
@@ -401,10 +448,15 @@ final class LauncherModel: ObservableObject {
                      icon: "list.bullet.rectangle", tint: .purple, primary: { [unowned self] in push(.runs) }),
             ListItem(id: "c:workspaces", section: "Commands", title: "Open Workspaces Folder", icon: "folder",
                      primary: { [unowned self] in NSWorkspace.shared.open(config.workspacesRoot); finish() }),
+            ListItem(id: "c:extensions", section: "Commands", title: "Open Extensions Folder",
+                     subtitle: "\(extensions.count) extensions in \(ExtensionCatalog.directory.tildePath)", icon: "puzzlepiece.extension",
+                     primary: { [unowned self] in NSWorkspace.shared.open(ExtensionCatalog.directory); finish() }),
             ListItem(id: "c:reload", section: "Commands", title: "Reload Projects & Config", icon: "arrow.clockwise", accessory: "⌘R",
-                     primary: { [unowned self] in reload(); refresh(); flash("Reloaded \(projects.count) projects, \(agents.count) agents") }),
-            ListItem(id: "c:config", section: "Commands", title: "Edit Config", subtitle: Config.fileURL.tildePath,
-                     icon: "gearshape", accessory: "⌘,", primary: { [unowned self] in openConfig() }),
+                     primary: { [unowned self] in reloadAndReport() }),
+            ListItem(id: "c:settings", section: "Commands", title: "Settings", subtitle: "Hotkey, folders, terminal, agents",
+                     icon: "gearshape", accessory: "⌘,", primary: { [unowned self] in finish(); openSettings() }),
+            ListItem(id: "c:config", section: "Commands", title: "Edit Config File", subtitle: Config.fileURL.tildePath,
+                     icon: "doc.text", primary: { [unowned self] in openConfig() }),
             ListItem(id: "c:login", section: "Commands", title: loginEnabled ? "Disable Launch at Login" : "Enable Launch at Login",
                      icon: "power", primary: { [unowned self] in toggleLaunchAtLogin() }),
             ListItem(id: "c:quit", section: "Commands", title: "Quit Summonbar", icon: "xmark.circle",
@@ -484,6 +536,170 @@ final class LauncherModel: ObservableObject {
         frames = [Frame(screen: .root)]
         push(.prompt(project), query: prompt)
         flash(existed ? "\(url.tildePath) already exists — opened it" : "Created \(url.tildePath)")
+    }
+
+    // MARK: - Extensions
+
+    private func extensionItem(_ ext: Extension, project: Project?, showProject: Bool = false) -> ListItem {
+        var subtitle = ext.description
+        if ext.mode == .inline, let output = inlineOutputs[ext.id]?.text { subtitle = output }
+        if showProject, ext.projectScoped, let project { subtitle = "in \(project.name) · ⌘K on a project to pick another" }
+        return ListItem(
+            id: "x:\(ext.id)", section: "Extensions", title: ext.title, subtitle: subtitle,
+            icon: ext.icon, tint: .teal, accessory: ext.packageName,
+            primaryLabel: ext.mode == .terminal ? "Run in \(config.terminalName)" : "Run",
+            primary: { [unowned self] in runExtension(ext, project) },
+            secondaryLabel: "Edit Script",
+            secondary: { [unowned self] in TerminalLauncher.openInEditor(ext.url, editor: config.editor); finish() },
+            actions: { [unowned self] in
+                [
+                    ListItem(id: "xa:term", section: ext.title, title: "Run in \(config.terminalName)", icon: "terminal", tint: .green,
+                             primary: { [unowned self] in runExtension(ext, project, forceTerminal: true) }),
+                    ListItem(id: "xa:edit", section: ext.title, title: "Edit Script in \(config.editor)", subtitle: ext.url.tildePath,
+                             icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
+                             primary: { [unowned self] in TerminalLauncher.openInEditor(ext.url, editor: config.editor); finish() }),
+                    ListItem(id: "xa:finder", section: ext.title, title: "Reveal in Finder", icon: "finder",
+                             primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([ext.url]); finish() }),
+                ]
+            })
+    }
+
+    private func projectExtensionItems(_ p: Project) -> [ListItem] {
+        extensions.filter(\.projectScoped).map { extensionItem($0, project: p) }
+    }
+
+    private func argumentItems(_ ext: Extension, _ project: Project?, _ values: [String]) -> [ListItem] {
+        guard values.count < ext.arguments.count else {
+            return [ListItem(id: "x:confirm", section: "Confirm", title: "Run \(ext.title)", subtitle: ext.description,
+                             icon: ext.icon, tint: .orange, primaryLabel: "Run",
+                             primary: { [unowned self] in runExtension(ext, project, values: values, confirmed: true) })]
+        }
+        let arg = ext.arguments[values.count]
+        let step = ext.arguments.count > 1 ? " · \(values.count + 1) of \(ext.arguments.count)" : ""
+        let isLast = values.count + 1 == ext.arguments.count
+        let submit: (String) -> Void = { [unowned self] raw in
+            let value = arg.percentEncoded ? raw.addingPercentEncoding(withAllowedCharacters: Self.uriComponentAllowed) ?? raw : raw
+            runExtension(ext, project, values: values + [value])
+        }
+        if arg.kind == .dropdown {
+            return filter(arg.options.enumerated().map { index, option in
+                ListItem(id: "x:opt:\(index)", section: arg.placeholder + step, title: option.title,
+                         subtitle: option.value == option.title ? nil : option.value, icon: "list.bullet", tint: .teal,
+                         primaryLabel: isLast ? "Run" : "Next", primary: { submit(option.value) })
+            })
+        }
+        let value = arg.kind == .password ? query : query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String
+        if value.isEmpty && !arg.optional { title = "Type \(arg.placeholder.lowercased()) above" }
+        else if isLast { title = "Run \(ext.title)" }
+        else { title = value.isEmpty ? "Skip \(arg.placeholder)" : "Next" }
+        return [ListItem(id: "x:submit", section: arg.placeholder + step, title: title, subtitle: ext.description,
+                         icon: ext.icon, tint: .teal, primaryLabel: isLast ? "Run" : "Next",
+                         primary: { [unowned self] in
+                             guard !value.isEmpty || arg.optional else { flash("\(arg.placeholder) is required"); return }
+                             submit(value)
+                         })]
+    }
+
+    /// Collects missing arguments and confirmation, then runs the extension.
+    private func runExtension(_ ext: Extension, _ project: Project?, values: [String] = [],
+                              confirmed: Bool = false, forceTerminal: Bool = false) {
+        if values.count < ext.arguments.count || (ext.needsConfirmation && !confirmed) {
+            let next = Screen.argument(ext, project, values)
+            if case .argument = screen { replaceTop(next) } else { push(next) }
+            return
+        }
+        if case .argument = screen { back() }
+        execute(ext, project, values, mode: forceTerminal ? .terminal : ext.mode)
+    }
+
+    private func execute(_ ext: Extension, _ project: Project?, _ values: [String], mode: ExtensionMode, background: Bool = false) {
+        if let project, ext.projectScoped { markUsed(project) }
+        let directory = (ext.projectScoped ? project?.url : nil) ?? ext.currentDirectory ?? ext.url.deletingLastPathComponent()
+        var env: [String: String] = ["SUMMONBAR_WORKSPACES": config.workspacesRoot.path]
+        if let project {
+            env["SUMMONBAR_PROJECT_DIR"] = project.url.path
+            env["SUMMONBAR_PROJECT_NAME"] = project.name
+        }
+
+        if mode == .terminal {
+            let command = ["/usr/bin/env"] + env.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" } + ext.command + values
+            TerminalLauncher.open(command: command, in: directory, terminal: config.terminal)
+            finish()
+            return
+        }
+
+        let run = ExtensionRun(ext: ext, arguments: values, directory: directory,
+                               environment: Shell.env.merging(env) { _, ours in ours })
+        run.onFinish = { [unowned self] run in
+            activeExtensionRuns.removeAll { $0 === run }
+            extensionFinished(run, project: project, mode: mode, background: background)
+        }
+        switch mode {
+        case .fullOutput: push(.output(run))
+        case .silent: finish()
+        case .agent, .compact, .inline: if !background { flash("Running \(ext.title)…") }
+        case .terminal: break
+        }
+        launch(run)
+    }
+
+    private func launch(_ run: ExtensionRun) {
+        activeExtensionRuns.append(run)
+        run.start()
+    }
+
+    private func extensionFinished(_ run: ExtensionRun, project: Project?, mode: ExtensionMode, background: Bool) {
+        let title = run.ext.title
+        switch mode {
+        case .fullOutput, .terminal:
+            break
+        case .silent, .compact:
+            if run.status == .failed { flash("\(title) failed: \(run.lastLine ?? "")") }
+            else if mode == .compact { flash(run.lastLine ?? "\(title) finished") }
+        case .inline:
+            inlineOutputs[run.ext.id] = (run.lastLine ?? "", Date())
+            if !background { flash(run.status == .failed ? "\(title) failed: \(run.lastLine ?? "")" : run.lastLine ?? "\(title) finished") }
+            if case .root = screen { refresh() }
+        case .agent:
+            let prompt = run.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard run.status == .done, !prompt.isEmpty else {
+                if run.status == .failed { push(.output(run)) }
+                return
+            }
+            guard let agent = agents.first(where: { $0.id == run.ext.agentId }) ?? defaultAgent,
+                  let target = project ?? contextProject else {
+                flash("No coding agent or project to send \(title) to")
+                return
+            }
+            if case .output = screen { back() }
+            startRun(agent, target, prompt)
+        }
+    }
+
+    /// Re-runs inline extensions whose `refreshTime` has passed, so their subtitles stay fresh.
+    private func refreshInlineExtensions() {
+        let now = Date()
+        for ext in extensions where ext.mode == .inline && !ext.projectScoped && ext.arguments.isEmpty {
+            guard let interval = ext.refreshTime,
+                  !activeExtensionRuns.contains(where: { $0.ext.id == ext.id }) else { continue }
+            if let last = inlineOutputs[ext.id], now.timeIntervalSince(last.date) < interval { continue }
+            execute(ext, contextProject, [], mode: .inline, background: true)
+        }
+    }
+
+    private static let uriComponentAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+    private func reloadAndReport() {
+        reload()
+        refresh()
+        flash("Reloaded \(projects.count) projects, \(agents.count) agents, \(extensions.count) extensions")
+    }
+
+    private func copy(_ text: String, label: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        flash("Copied \(label)")
     }
 
     private func openConfig() {

@@ -77,11 +77,12 @@ struct Agent: Identifiable, Hashable {
 }
 
 enum AgentCatalog {
-    private struct Spec {
+    struct Spec {
         let id: String, name: String, binary: String, icon: String, format: OutputFormat
     }
 
-    private static let specs: [Spec] = [
+    /// Every agent Summonbar knows how to drive, installed or not.
+    static let specs: [Spec] = [
         Spec(id: "claude", name: "Claude Code", binary: "claude", icon: "sparkle", format: .claude),
         Spec(id: "codex", name: "Codex", binary: "codex", icon: "hexagon", format: .codex),
         Spec(id: "gemini", name: "Gemini CLI", binary: "gemini", icon: "diamond", format: .plain),

@@ -30,12 +30,20 @@ struct LauncherView: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            TextField(model.placeholder, text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 20))
-                .focused($focused)
+            Group {
+                if model.isSecureInput {
+                    SecureField(model.placeholder, text: $model.query)
+                } else {
+                    TextField(model.placeholder, text: $model.query)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 20))
+            .focused($focused)
             if case .run(let run) = model.screen {
                 RunStatusBadge(run: run)
+            } else if case .output(let run) = model.screen {
+                ExtensionStatusBadge(run: run)
             }
         }
         .padding(.horizontal, 16)
@@ -45,6 +53,8 @@ struct LauncherView: View {
     @ViewBuilder private var content: some View {
         if case .run(let run) = model.screen {
             RunView(run: run)
+        } else if case .output(let run) = model.screen {
+            ExtensionOutputView(run: run)
         } else {
             ResultsList(model: model)
         }
@@ -136,11 +146,7 @@ struct ItemRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: item.icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(item.tint)
-                .frame(width: 26, height: 26)
-                .background(item.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+            ItemIcon(icon: item.icon, tint: item.tint)
             Text(item.title)
                 .font(.system(size: 14))
                 .lineLimit(1)
@@ -162,11 +168,49 @@ struct ItemRow: View {
     }
 }
 
+/// An SF Symbol name, an emoji, or a path to an image file (extension icons).
+struct ItemIcon: View {
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        Group {
+            if icon.hasPrefix("/") {
+                if let image = NSImage(contentsOfFile: icon) {
+                    Image(nsImage: image).resizable().scaledToFit().padding(4)
+                } else {
+                    Image(systemName: "puzzlepiece.extension")
+                }
+            } else if NSImage(systemSymbolName: icon, accessibilityDescription: nil) != nil {
+                Image(systemName: icon)
+            } else {
+                Text(icon).font(.system(size: 15))
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(tint)
+        .frame(width: 26, height: 26)
+        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 struct RunStatusBadge: View {
     @ObservedObject var run: AgentRun
 
+    var body: some View { StatusIcon(status: run.status) }
+}
+
+struct ExtensionStatusBadge: View {
+    @ObservedObject var run: ExtensionRun
+
+    var body: some View { StatusIcon(status: run.status) }
+}
+
+struct StatusIcon: View {
+    let status: RunStatus
+
     var body: some View {
-        switch run.status {
+        switch status {
         case .running: ProgressView().controlSize(.small)
         case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
@@ -202,6 +246,37 @@ struct RunView: View {
             .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: run.entries.count) { proxy.scrollTo("bottom", anchor: .bottom) }
             .onChange(of: run.live) { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+    }
+}
+
+struct ExtensionOutputView: View {
+    @ObservedObject var run: ExtensionRun
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if run.output.isEmpty {
+                        HStack(spacing: 8) {
+                            if run.isRunning { ProgressView().controlSize(.small) }
+                            Text(run.isRunning ? "Running \(run.ext.title)…" : "No output").foregroundStyle(.secondary)
+                        }
+                        .font(.system(size: 12))
+                    } else {
+                        Text(run.output)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(run.status == .failed ? Color.red.opacity(0.9) : .primary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: run.output) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }
 }

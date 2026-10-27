@@ -17,6 +17,7 @@ private struct ConfigFile: Codable {
     var defaultAgent: String?
     var gitInitNewProjects: Bool?
     var agents: [String: AgentOverride]?
+    var extensionDirectories: [String]?
 }
 
 struct Config {
@@ -27,6 +28,8 @@ struct Config {
     var defaultAgent: String
     var gitInitNewProjects: Bool
     var agents: [String: AgentOverride]
+    /// Extra folders of extension scripts, e.g. a clone of raycast/script-commands.
+    var extensionDirectories: [URL]
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/summonbar", isDirectory: true)
@@ -58,7 +61,8 @@ struct Config {
             editor: file.editor ?? "Visual Studio Code",
             defaultAgent: file.defaultAgent ?? "claude",
             gitInitNewProjects: file.gitInitNewProjects ?? true,
-            agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user }
+            agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user },
+            extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) }
         )
     }
 
@@ -73,18 +77,37 @@ struct Config {
             gitInitNewProjects: true,
             agents: defaultAgents
         )
+        try? write(template)
+    }
+
+    /// Writes this config back to config.json (used by the Settings window).
+    func save() throws {
+        try Self.write(ConfigFile(
+            workspacesRoot: workspacesRoot.tildePath,
+            hotkey: hotkey,
+            terminal: terminal,
+            editor: editor,
+            defaultAgent: defaultAgent,
+            gitInitNewProjects: gitInitNewProjects,
+            agents: agents
+        ))
+    }
+
+    private static func write(_ file: ConfigFile) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(template) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? data.write(to: fileURL)
+        let data = try encoder.encode(file)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: fileURL, options: .atomic)
     }
 
     static func expand(_ path: String) -> String {
         (path as NSString).expandingTildeInPath
     }
 
-    var terminalName: String {
+    var terminalName: String { Self.terminalName(terminal) }
+
+    static func terminalName(_ terminal: String) -> String {
         switch terminal.lowercased() {
         case "ghostty": return "Ghostty"
         case "iterm", "iterm2": return "iTerm"
