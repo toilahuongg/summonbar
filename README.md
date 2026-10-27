@@ -13,6 +13,8 @@
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
   <img alt="Swift 5.10" src="https://img.shields.io/badge/Swift-5.10-F05138?logo=swift&logoColor=white">
   <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-6E56CF">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen"></a>
 </p>
 
 <p align="center">
@@ -254,3 +256,11 @@ Sources/Summonbar/
   Config.swift, Store.swift
 assets/                logo (SVG source + PNG) and README screenshots
 ```
+
+## Contributing
+
+Summonbar is open source and contributions are welcome: bug fixes, new agents, extensions, docs. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the few ground rules (no dependencies, no Accessibility permission, keyboard first), then pick an [open issue](https://github.com/toilahuongg/summonbar/issues) or open one to discuss your idea. Please report security issues privately, as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE)

@@ -1,0 +1,43 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Press ⇧⌘Space
+        2. Type …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.1"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Summonbar commit
+      description: Output of `git rev-parse --short HEAD` in your clone.
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      description: If the bug involves an agent run, e.g. output of `claude --version`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, config or screenshots
+      description: Remove private paths, prompts and tokens first.
