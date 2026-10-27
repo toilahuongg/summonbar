@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
 
 /// Editable copy of config.json. Changes are written back (debounced) and
@@ -92,7 +91,7 @@ final class SettingsModel: ObservableObject {
         appRows = (installed.isEmpty ? AppScanner.scan(extraDirectories: settings.directoryURLs) : installed).map { app in
             AppRow(app: app, alias: settings.alias(app) ?? "", hotkey: settings.hotkey(app) ?? "", visible: !settings.isHidden(app))
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLogin = LoginItem.isEnabled
         error = nil
     }
 
@@ -157,11 +156,11 @@ final class SettingsModel: ObservableObject {
 
     func setLaunchAtLogin(_ on: Bool) {
         do {
-            if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            try LoginItem.set(on)
         } catch {
             self.error = "Launch at login failed: \(error.localizedDescription)"
         }
-        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLogin = LoginItem.isEnabled
     }
 
     func chooseWorkspacesRoot() {

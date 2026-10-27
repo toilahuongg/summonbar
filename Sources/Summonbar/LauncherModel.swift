@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
 
 struct ListItem: Identifiable {
@@ -546,7 +545,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func commandItems() -> [ListItem] {
-        let loginEnabled = SMAppService.mainApp.status == .enabled
+        let loginEnabled = LoginItem.isEnabled
         return [
             ListItem(id: "c:new", section: "Commands", title: "New Project", subtitle: "Create a folder in \(config.workspacesRoot.tildePath)",
                      icon: "folder.badge.plus", tint: .orange, primary: { [unowned self] in query = "new " }),
@@ -1281,11 +1280,11 @@ final class LauncherModel: ObservableObject {
 
     private func toggleLaunchAtLogin() {
         do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
+            if LoginItem.isEnabled {
+                try LoginItem.set(false)
                 flash("Launch at login disabled")
             } else {
-                try SMAppService.mainApp.register()
+                try LoginItem.set(true)
                 flash("Launch at login enabled")
             }
         } catch {

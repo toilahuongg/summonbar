@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Security
 
 /// Updates Summonbar in place from GitHub Releases: downloads the release zip,
 /// checks it, swaps it in for the running app and relaunches.
@@ -168,9 +169,27 @@ final class Updater: ObservableObject {
             throw UpdateError("the zip holds version \(version ?? "?"), not \(release.version)")
         }
         try runTool("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], "The update's signature is broken")
+        // A Developer ID build only takes updates signed by the same team.
+        if let team = teamIdentifier() {
+            let requirement = "=anchor apple generic and identifier \"\(bundle.bundleIdentifier!)\" and certificate leaf[subject.OU] = \"\(team)\""
+            try runTool("/usr/bin/codesign", ["--verify", "--strict", "-R", requirement, app.path],
+                        "The update isn't signed by the same developer")
+        }
         // Gatekeeper would block an ad-hoc signed app that's still quarantined.
         try? runTool("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app.path], "")
         return app
+    }
+
+    /// The running app's Developer ID team, or nil when it's ad-hoc signed.
+    nonisolated private static func teamIdentifier() -> String? {
+        var code: SecCode?
+        var staticCode: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess
+        else { return nil }
+        return (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     nonisolated private static func expectOK(_ response: URLResponse) throws {

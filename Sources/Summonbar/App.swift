@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Shell.loadUserEnvironment()
         TerminalLauncher.cleanUp()
+        LoginItem.restore()
         model = LauncherModel()
         panel = PanelController(model: model)
         model.runsChanged = { [weak self] in self?.updateStatusItem() }

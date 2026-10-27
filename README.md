@@ -61,11 +61,7 @@ Requires macOS 14+.
 
 1. Grab `Summonbar-<version>.zip` from the [latest release](https://github.com/toilahuongg/summonbar/releases/latest). It's a universal build for Apple Silicon and Intel.
 2. Unzip it and move `Summonbar.app` to `/Applications` (or `~/Applications`).
-3. The app is ad-hoc signed but not notarized, so macOS blocks it the first time you open it. Right-click the app and choose **Open**, then **Open** again in the dialog. On macOS 15, if there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**. Or clear the quarantine flag from a terminal:
-
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Summonbar.app
-   ```
+3. Open it. The app is signed with a Developer ID and notarized by Apple, so it opens like any other download.
 
 ### Updating
 
@@ -291,18 +287,19 @@ Summonbar never signs you in to anything. It runs the `claude` and `codex` you a
   - Claude Code: `claude -p --output-format stream-json`.
   - Codex: `codex exec --json`.
   - The session id is kept so follow-ups and ⌘T resume the same conversation.
-- **Updates** come from the GitHub API's latest release. The zip is unpacked next to the running app, checked (SHA-256 from GitHub, bundle id, version, `codesign --verify`), and swapped in with `FileManager.replaceItemAt`; a small shell waits for the old process to exit and opens the new one. A release needs a `Summonbar-<version>.zip` asset holding `Summonbar.app`, with `CFBundleShortVersionString` matching the tag.
+- **Updates** come from the GitHub API's latest release. The zip is unpacked next to the running app, checked (SHA-256 from GitHub, bundle id, version, `codesign --verify`, and the same Developer ID team as the running app), and swapped in with `FileManager.replaceItemAt`; a small shell waits for the old process to exit and opens the new one. A release needs a `Summonbar-<version>.zip` asset holding `Summonbar.app`, with `CFBundleShortVersionString` matching the tag.
 - **Environment:** on launch Summonbar reads your login shell's environment once, so agents installed through nvm, Homebrew or `~/.local/bin` are found just as they are in your terminal.
 
 ## Development
 
 ```bash
 swift build                       # debug build
-./scripts/build-app.sh            # release .app in build/
+./scripts/build-app.sh            # release .app in build/, signed with your Developer ID if the keychain has one, else ad-hoc
+./scripts/build-app.sh --release  # universal, notarized build/Summonbar-<version>.zip (see the Release workflow for credentials)
 ./scripts/make-icon.sh            # re-render the app icon, logo.png and social-preview.png from their SVGs (needs Google Chrome)
 ```
 
-GitHub Actions builds every push to `main` and every pull request on macOS 14. The repository's social preview (`assets/social-preview.png`) is uploaded by hand in **Settings › General › Social preview** after it changes.
+GitHub Actions builds every push to `main` and every pull request on macOS 14. Pushing a `v<version>` tag runs the Release workflow, which signs with the Developer ID certificate, notarizes and attaches `Summonbar-<version>.zip` to that release (a draft if it doesn't exist yet). It needs the repository secrets `DEVELOPER_ID_P12` and `DEVELOPER_ID_P12_PASSWORD` (the certificate as a base64 .p12) and `NOTARY_KEY_P8`, `NOTARY_KEY_ID` and `NOTARY_ISSUER` (an App Store Connect API key, the .p8 base64-encoded). The repository's social preview (`assets/social-preview.png`) is uploaded by hand in **Settings › General › Social preview** after it changes.
 
 ```
 Sources/Summonbar/
@@ -321,6 +318,8 @@ Sources/Summonbar/
   Translate.swift      languages, Google Translate client, live translation state
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
+  LoginItem.swift      launch at login (SMAppService), re-registered after ad-hoc rebuilds
+  Updater.swift        in-place updates from GitHub Releases
   Config.swift, Store.swift
 assets/                logo and social preview (SVG sources + PNGs), README screenshots
 ```
