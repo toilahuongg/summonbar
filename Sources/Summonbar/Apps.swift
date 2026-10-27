@@ -13,6 +13,15 @@ struct InstalledApp: Identifiable, Hashable {
     /// Key for aliases, hotkeys and hidden apps in config.json; survives the app moving.
     var key: String { bundleId ?? url.path }
     var isSystem: Bool { url.path.hasPrefix("/System/") }
+
+    /// Higher is better; nil means no match. An exact alias wins, and "vsc" finds Visual Studio Code.
+    func matchScore(_ query: String, alias: String?) -> Int? {
+        if let alias, alias.caseInsensitiveCompare(query) == .orderedSame { return 5000 }
+        let words = name.split(whereSeparator: { $0 == " " || $0 == "-" })
+        let initials = query.count >= 2 && words.count >= query.count
+            && String(words.compactMap(\.first)).lowercased().hasPrefix(query.lowercased()) ? 1050 : nil
+        return ([name, fileName, alias].compactMap { $0 }.compactMap { Fuzzy.score(query, $0) } + [initials].compactMap { $0 }).max()
+    }
 }
 
 enum AppScanner {
@@ -54,12 +63,14 @@ enum AppScanner {
     }
 
     private static func collect(in dir: URL, depth: Int) -> [URL] {
+        // Not .skipsHiddenFiles: /Applications/Safari.app is a symlink with the hidden flag set.
         let items = (try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+            at: dir, includingPropertiesForKeys: [.isDirectoryKey], options: [])) ?? []
         var out: [URL] = []
-        for item in items {
+        for item in items where !item.lastPathComponent.hasPrefix(".") {
             if item.pathExtension == "app" {
-                out.append(item)
+                // Resolved, so the path matches NSRunningApplication.bundleURL (Safari lives in a cryptex).
+                out.append(item.resolvingSymlinksInPath())
             } else if depth > 1, (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 out += collect(in: item, depth: depth - 1)
             }

@@ -187,10 +187,18 @@ final class SettingsModel: ObservableObject {
         return url.deletingPathExtension().lastPathComponent
     }
 
-    func matchesFilter(_ row: AppRow) -> Bool {
+    /// Indices into `appRows` matching the filter, best match first; ranked like the launcher's search.
+    var filteredAppIndices: [Int] {
         let q = appFilter.trimmingCharacters(in: .whitespaces)
-        return q.isEmpty || [row.app.name, row.app.fileName, row.alias, row.app.bundleId ?? ""]
-            .contains { $0.localizedCaseInsensitiveContains(q) }
+        guard !q.isEmpty else { return Array(appRows.indices) }
+        return appRows.indices.compactMap { i -> (Int, Int)? in
+            let row = appRows[i]
+            let score = row.app.matchScore(q, alias: row.alias.isEmpty ? nil : row.alias)
+                ?? (row.app.bundleId?.localizedCaseInsensitiveContains(q) == true ? 0 : nil)
+            return score.map { (i, $0) }
+        }
+        .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0 < $1.0 }
+        .map(\.0)
     }
 
     // MARK: - Choices
@@ -505,20 +513,26 @@ private struct ApplicationSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            let indices = model.filteredAppIndices
             Section {
-                ForEach($model.appRows) { $row in
-                    if model.matchesFilter(row) {
-                        AppSettingsRow(row: $row, pauseHotKey: model.pauseHotKey)
-                    }
+                ForEach(indices, id: \.self) { i in
+                    AppSettingsRow(row: $model.appRows[i], pauseHotKey: model.pauseHotKey)
+                }
+                if indices.isEmpty {
+                    Text("No apps match “\(model.appFilter.trimmingCharacters(in: .whitespaces))”")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
                 }
             } header: {
                 HStack {
-                    Text("\(model.appRows.count) installed")
+                    Text(indices.count == model.appRows.count
+                         ? "\(model.appRows.count) installed" : "\(indices.count) of \(model.appRows.count)")
                     Spacer()
-                    TextField("", text: $model.appFilter, prompt: Text("Filter"))
+                    TextField("", text: $model.appFilter, prompt: Text("Filter by name, alias or bundle id"))
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
+                        .frame(width: 220)
+                        .onExitCommand { model.appFilter = "" }
                 }
                 .textCase(nil)
             }

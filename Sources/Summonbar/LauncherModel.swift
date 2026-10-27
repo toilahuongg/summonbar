@@ -792,18 +792,11 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    /// Matches name, file name and alias; an exact alias wins, and apps opened from here rank higher.
+    /// Matches name, file name and alias; apps opened from here rank higher.
     private func matchApps(_ q: String, in list: [InstalledApp]) -> [(InstalledApp, Int)] {
         let settings = config.applications
         return list.compactMap { app -> (InstalledApp, Int)? in
-            let alias = settings.alias(app)
-            if let alias, alias.caseInsensitiveCompare(q) == .orderedSame { return (app, 5000) }
-            // "vsc" finds Visual Studio Code.
-            let words = app.name.split(whereSeparator: { $0 == " " || $0 == "-" })
-            let initials = q.count >= 2 && words.count >= q.count
-                && String(words.compactMap(\.first)).lowercased().hasPrefix(q.lowercased()) ? 1050 : nil
-            guard let best = ([app.name, app.fileName, alias].compactMap({ $0 }).compactMap({ Fuzzy.score(q, $0) }) + [initials].compactMap({ $0 })).max()
-            else { return nil }
+            guard let best = app.matchScore(q, alias: settings.alias(app)) else { return nil }
             return (app, best + (appUsage[app.key] != nil ? 100 : 0))
         }.sorted { a, b in
             a.1 != b.1 ? a.1 > b.1 : (appUsage[a.0.key] ?? .distantPast) > (appUsage[b.0.key] ?? .distantPast)
