@@ -194,6 +194,22 @@ final class ClipboardHistory {
         changed()
     }
 
+    /// Whether ⌘V can be sent to other apps, which needs Accessibility permission.
+    /// With `prompt`, macOS asks for it when it's missing.
+    static func canPaste(prompt: Bool) -> Bool {
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary)
+    }
+
+    /// Presses ⌘V in the frontmost app.
+    static func paste() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for keyDown in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: keyDown)  // V
+            event?.flags = .maskCommand
+            event?.post(tap: .cghidEventTap)
+        }
+    }
+
     func togglePin(_ entry: ClipboardEntry) {
         guard let i = entries.firstIndex(where: { $0.id == entry.id }) else { return }
         entries[i].pinned = entries[i].isPinned ? nil : true

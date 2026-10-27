@@ -424,7 +424,7 @@ private struct GeneralSettings: View {
             } header: {
                 Text("Clipboard")
             } footer: {
-                Text("Keeps what you copy (the last 200 by default) on this Mac only. Passwords marked as concealed by password managers are skipped.")
+                Text("Keeps what you copy (the last 200 by default) on this Mac only. Passwords marked as concealed by password managers are skipped. Pasting with ↵ needs Accessibility permission; without it, ↵ only copies.")
                     .foregroundStyle(.secondary)
             }
 
@@ -598,8 +598,9 @@ private struct ShortcutSettings: View {
         ("Pick a language", "⌘K"),
     ]
     private static let clipboard = [
-        ("Copy, then paste with ⌘V", "↵"),
-        ("Pin or unpin", "⌘↵"),
+        ("Paste into the app you were in", "↵"),
+        ("Copy only", "⌘↵"),
+        ("Pin or unpin", "⇧⌘P"),
         ("Open in browser, translate, delete, clear", "⌘K"),
     ]
     private static let prefixes = [

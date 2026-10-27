@@ -333,6 +333,9 @@ final class LauncherModel: ObservableObject {
             if case .run(let run) = screen { run.stop() }
             if case .output(let run) = screen { run.stop() }
             return true
+        case "p" where flags.contains(.shift) && isShowingClipboard:
+            toggleSelectedClipboardPin()
+            return true
         case "f" where flags.contains(.shift):
             if let url = selectedItem?.file { reveal(url) }
             return true
@@ -1165,8 +1168,8 @@ final class LauncherModel: ObservableObject {
         return ListItem(
             id: "clip:\(entry.id)", section: entry.isPinned ? "Pinned" : daySection(entry.date), title: entry.title,
             icon: icon, tint: .teal, accessory: relativeDate(entry.date),
-            primaryLabel: "Copy", primary: { [unowned self] in copyClipboardEntry(entry) },
-            secondaryLabel: entry.isPinned ? "Unpin" : "Pin", secondary: { [unowned self] in clipboard.togglePin(entry) },
+            primaryLabel: "Paste", primary: { [unowned self] in pasteClipboardEntry(entry) },
+            secondaryLabel: "Copy", secondary: { [unowned self] in copyClipboardEntry(entry) },
             actions: { [unowned self] in clipboardActions(entry) },
             file: entry.kind == .files ? entry.fileURLs.first : nil)
     }
@@ -1174,11 +1177,13 @@ final class LauncherModel: ObservableObject {
     private func clipboardActions(_ entry: ClipboardEntry) -> [ListItem] {
         let section = "Clipboard"
         var out = [
+            ListItem(id: "ca:paste", section: section, title: "Paste", subtitle: "Into the app you were in",
+                     icon: "doc.on.clipboard.fill", tint: .teal, primary: { [unowned self] in pasteClipboardEntry(entry) }),
             ListItem(id: "ca:copy", section: section, title: "Copy", subtitle: "Then paste it with ⌘V", icon: "doc.on.clipboard",
                      tint: .teal, primary: { [unowned self] in copyClipboardEntry(entry) }),
             ListItem(id: "ca:pin", section: section, title: entry.isPinned ? "Unpin" : "Pin",
                      subtitle: entry.isPinned ? nil : "Pinned entries stay on top and are never cleared", icon: "pin",
-                     primary: { [unowned self] in clipboard.togglePin(entry); closeActions() }),
+                     accessory: "⇧⌘P", primary: { [unowned self] in clipboard.togglePin(entry); closeActions() }),
         ]
         if let link = entry.link {
             out.append(ListItem(id: "ca:link", section: section, title: "Open in Browser", subtitle: link.absoluteString,
@@ -1227,6 +1232,20 @@ final class LauncherModel: ObservableObject {
     private func copyClipboardEntry(_ entry: ClipboardEntry) {
         clipboard.copy(entry)
         finish()
+    }
+
+    /// Copies the entry, hides the launcher and pastes it into the app you were in. Without
+    /// Accessibility permission it's only copied, and macOS asks for the permission.
+    private func pasteClipboardEntry(_ entry: ClipboardEntry) {
+        copyClipboardEntry(entry)
+        guard ClipboardHistory.canPaste(prompt: true) else { return }
+        // Give the app you were in a moment to take the keyboard back from the panel.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { ClipboardHistory.paste() }
+    }
+
+    func toggleSelectedClipboardPin() {
+        guard let entry = selectedClipboardEntry else { return }
+        clipboard.togglePin(entry)
     }
 
     // MARK: - Extensions

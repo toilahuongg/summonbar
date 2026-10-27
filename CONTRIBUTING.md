@@ -26,7 +26,7 @@ Your real config lives in `~/.config/summonbar/config.json` and run history in `
 ## Guidelines
 
 - **No dependencies.** Summonbar is plain Swift + AppKit/SwiftUI on purpose. Please don't add Swift packages; if you think one is really needed, raise it in an issue first.
-- **No Accessibility permission.** Features must work without it (that's why the hotkey uses Carbon and the panel routes its own keys).
+- **No Accessibility permission.** Features must work without it (that's why the hotkey uses Carbon and the panel routes its own keys). The one exception is pasting from Clipboard History, which falls back to copying when the permission is missing.
 - **Match the surrounding code.** Same naming, same comment density, same file layout. Put new code in the file that already owns that area; add a new file only for a new area, and list it in the README's source map.
 - **Keyboard first.** Every new action needs a key path, should show in the footer or ⌘K, and must not break input methods (Vietnamese Telex, Japanese IME, …) that compose text before ↵ / esc.
 - **Keep the README in sync.** If you add a key binding, config key, command or agent, update the matching table or section in the README in the same pull request.

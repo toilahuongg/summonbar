@@ -36,8 +36,8 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **An app launcher too.** Installed apps show up in search with aliases, per-app global hotkeys, and quit / restart / hide / force quit / trash from ⌘K, like Raycast.
 - **Translate as you type.** `tr bonjour` shows the translation right in the list; ↵ copies it.
-- **Clipboard history.** What you copy (text, links, images, files) is kept on your Mac, searchable, with a preview. Pin what you reuse, and give it its own hotkey.
-- **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
+- **Clipboard history.** What you copy (text, links, images, files) is kept on your Mac, searchable, with a preview. ↵ pastes it back into the app you were in. Pin what you reuse, and give it its own hotkey.
+- **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission, except to paste from Clipboard History.
 
 <p align="center">
   <img src="assets/screenshots/search.png" width="760" alt="Searching projects and asking an agent">
@@ -261,11 +261,12 @@ Summonbar keeps what you copy: text, links, images and files. Open **Clipboard H
 
 | Where | Key | Action |
 |---|---|---|
-| Clipboard History | ↵ | Copy the entry and hide the launcher; paste it with ⌘V |
-| | ⌘↵ | Pin or unpin it |
+| Clipboard History | ↵ | Paste the entry into the app you were in |
+| | ⌘↵ | Copy it only, and hide the launcher |
+| | ⇧⌘P | Pin or unpin it |
 | | ⌘K | Open a link in the browser, translate text, open files or copy their paths, open an image in Preview, delete, or clear history |
 
-Summonbar doesn't paste for you, since that would need Accessibility permission.
+Pasting presses ⌘V for you, which needs Accessibility permission. The first time you press ↵, macOS asks for it; turn Summonbar on in **System Settings › Privacy & Security › Accessibility**. Until then ↵ only copies the entry, and you paste it with ⌘V. Nothing else in Summonbar uses the permission.
 
 History stays on this Mac, in `~/Library/Application Support/Summonbar/clipboard.json` with images next to it in `clipboard/`. The last 200 entries are kept, plus everything pinned. **Clear History** keeps pinned entries. What password managers mark as concealed or transient ([nspasteboard.org](http://nspasteboard.org)), and anything copied from Keychain Access or Passwords, is never saved. Text or images over 10 MB are skipped too.
 
@@ -348,7 +349,7 @@ assets/                logo and social preview (SVG sources + PNGs), README scre
 
 ## Contributing
 
-Summonbar is open source and contributions are welcome: bug fixes, new agents, extensions, docs. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the few ground rules (no dependencies, no Accessibility permission, keyboard first), then pick an [open issue](https://github.com/toilahuongg/summonbar/issues) or open one to discuss your idea. Please report security issues privately, as described in [SECURITY.md](SECURITY.md).
+Summonbar is open source and contributions are welcome: bug fixes, new agents, extensions, docs. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the setup and the few ground rules (no dependencies, no Accessibility permission for anything but pasting, keyboard first), then pick an [open issue](https://github.com/toilahuongg/summonbar/issues) or open one to discuss your idea. Please report security issues privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
