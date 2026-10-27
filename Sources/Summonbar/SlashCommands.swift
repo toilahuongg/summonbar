@@ -1,8 +1,10 @@
 import Foundation
 
 /// A Claude Code custom command (`.claude/commands/*.md`) or skill
-/// (`.claude/skills/<name>/SKILL.md`) that a project or `~/.claude` defines.
-/// Running one sends `/name args` to Claude Code, which expands it.
+/// (`.claude/skills/<name>/SKILL.md`) that a project or `~/.claude` defines,
+/// or an Agent Skill in `.agents/skills` or `~/.agents/skills`.
+/// Running one sends `/name args` to Claude Code, or `$name args` to Codex
+/// for an `.agents` skill, since Claude Code doesn't load those.
 struct SlashCommand: Identifiable {
     enum Kind { case command, skill }
 
@@ -11,28 +13,36 @@ struct SlashCommand: Identifiable {
     let description: String?
     let argumentHint: String?
     let url: URL
-    /// From `~/.claude` rather than the project.
+    /// From `~/.claude` or `~/.agents` rather than the project.
     let isPersonal: Bool
+    /// From `.agents/skills`, which Codex reads and Claude Code doesn't.
+    var isAgentSkill = false
 
     var id: String { url.path }
-    var invocation: String { "/" + name }
+    var invocation: String { (isAgentSkill ? "$" : "/") + name }
 }
 
 enum SlashCommandScanner {
     static func scan(project: URL) -> [SlashCommand] {
-        scan(claude: project.appendingPathComponent(".claude", isDirectory: true), personal: false)
+        scan(root: project, personal: false)
     }
 
     /// The user's own commands and skills, available in every project.
     static func scanPersonal() -> [SlashCommand] {
-        scan(claude: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true),
-             personal: true)
+        scan(root: FileManager.default.homeDirectoryForCurrentUser, personal: true)
     }
 
-    private static func scan(claude: URL, personal: Bool) -> [SlashCommand] {
+    /// `.claude` wins over `.agents` for the same name, which also hides the copies
+    /// that skill installers symlink into both.
+    private static func scan(root: URL, personal: Bool) -> [SlashCommand] {
+        let claude = root.appendingPathComponent(".claude", isDirectory: true)
         let found = commands(in: claude.appendingPathComponent("commands", isDirectory: true), personal: personal)
             + skills(in: claude.appendingPathComponent("skills", isDirectory: true), personal: personal)
-        return found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let taken = Set(found.map(\.name))
+        let agents = skills(in: root.appendingPathComponent(".agents/skills", isDirectory: true), personal: personal)
+            .filter { !taken.contains($0.name) }
+            .map { var skill = $0; skill.isAgentSkill = true; return skill }
+        return (found + agents).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Every `.md` file, subfolders included; the file name is the command name.

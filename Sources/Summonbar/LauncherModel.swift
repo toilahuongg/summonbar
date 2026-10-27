@@ -100,6 +100,10 @@ final class LauncherModel: ObservableObject {
     var defaultAgent: Agent? { agents.first }
     /// Project commands and skills are Claude Code's, so they always go to it.
     var claudeAgent: Agent? { agents.first { $0.id == "claude" } }
+    /// Claude Code runs `.claude` commands and skills; Codex runs `.agents` skills.
+    private func agent(for cmd: SlashCommand) -> Agent? {
+        agents.first { $0.id == (cmd.isAgentSkill ? "codex" : "claude") }
+    }
     var runningCount: Int { runs.filter(\.isRunning).count }
 
     private var pendingArgument: ExtensionArgument? {
@@ -465,8 +469,9 @@ final class LauncherModel: ObservableObject {
         }
         out += runs.filter { $0.projectURL == p.url }.prefix(5).map { var i = runItem($0); i.section = "Previous Runs"; return i }
         out += projectExtensionItems(p)
-        // Typing `/name args` puts the matching commands and skills first, personal ones included.
-        if prompt.hasPrefix("/") {
+        // Typing `/name args` (or `$name args`) puts the matching commands and skills first,
+        // personal ones included.
+        if prompt.hasPrefix("/") || prompt.hasPrefix("$") {
             let parts = prompt.dropFirst().split(separator: " ", maxSplits: 1)
             let token = parts.first.map(String.init) ?? ""
             let args = parts.count > 1 ? String(parts[1]) : ""
@@ -1036,9 +1041,9 @@ final class LauncherModel: ObservableObject {
         startRun(agent, project, prompt)
     }
 
-    // MARK: - Claude Code commands and skills
+    // MARK: - Claude Code commands and skills, and Agent Skills
 
-    /// Project commands and skills; personal ones from `~/.claude` only when asked, since they'd
+    /// Project commands and skills; personal ones from `~/.claude` and `~/.agents` only when asked, since they'd
     /// crowd every project's list. A project item wins over a personal one with the same name.
     private func slashCommands(_ p: Project, includePersonal: Bool = false) -> [SlashCommand] {
         let project = slashCache[p.url] ?? SlashCommandScanner.scan(project: p.url)
@@ -1055,24 +1060,26 @@ final class LauncherModel: ObservableObject {
     }
 
     private func slashItem(_ cmd: SlashCommand, _ p: Project, args: String = "", showProject: Bool = false) -> ListItem? {
-        guard let claude = claudeAgent else { return nil }
+        guard let agent = agent(for: cmd) else { return nil }
         let prompt = args.isEmpty ? cmd.invocation : "\(cmd.invocation) \(args)"
         let wantsArguments = args.isEmpty && cmd.argumentHint != nil
         return ListItem(
-            id: "s:\(cmd.id)", section: (cmd.isPersonal ? "Personal " : "Claude ") + (cmd.kind == .skill ? "Skills" : "Commands"),
+            id: "s:\(cmd.id)",
+            section: (cmd.isPersonal ? "Personal " : "") + (cmd.isAgentSkill ? "Agent " : cmd.isPersonal ? "" : "Claude ")
+                + (cmd.kind == .skill ? "Skills" : "Commands"),
             title: prompt,
             subtitle: showProject ? "in \(p.name) · ⌘K on a project to pick another" : cmd.description,
             icon: cmd.kind == .skill ? "wand.and.stars" : "slash.circle", tint: .purple, accessory: args.isEmpty ? cmd.argumentHint : nil,
-            primaryLabel: wantsArguments ? "Add Arguments" : "Ask \(claude.name)",
-            primary: { [unowned self] in wantsArguments ? push(.slash(cmd, p)) : startRun(claude, p, prompt) },
+            primaryLabel: wantsArguments ? "Add Arguments" : "Ask \(agent.name)",
+            primary: { [unowned self] in wantsArguments ? push(.slash(cmd, p)) : startRun(agent, p, prompt) },
             secondaryLabel: "Open in \(config.terminalName)",
-            secondary: { [unowned self] in launch(claude, p, prompt: prompt) },
+            secondary: { [unowned self] in launch(agent, p, prompt: prompt) },
             actions: { [unowned self] in
                 [
                     ListItem(id: "sa:args", section: cmd.invocation, title: "Run with Arguments…", icon: "text.cursor", tint: .purple,
                              primary: { [unowned self] in push(.slash(cmd, p)) }),
                     ListItem(id: "sa:term", section: cmd.invocation, title: "Open in \(config.terminalName)", icon: "terminal", tint: .green,
-                             primary: { [unowned self] in launch(claude, p, prompt: prompt) }),
+                             primary: { [unowned self] in launch(agent, p, prompt: prompt) }),
                     ListItem(id: "sa:edit", section: cmd.invocation, title: "Edit in \(config.editor)", subtitle: cmd.url.tildePath,
                              icon: "chevron.left.forwardslash.chevron.right", tint: .blue,
                              primary: { [unowned self] in TerminalLauncher.openInEditor(cmd.url, editor: config.editor); finish() }),
@@ -1085,15 +1092,15 @@ final class LauncherModel: ObservableObject {
     private func slashArgumentItems(_ cmd: SlashCommand, _ p: Project) -> [ListItem] {
         let args = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var item = slashItem(cmd, p, args: args) else {
-            return [ListItem(id: "s:noclaude", section: cmd.invocation, title: "Claude Code isn't on PATH",
+            return [ListItem(id: "s:noagent", section: cmd.invocation,
+                             title: "\(cmd.isAgentSkill ? "Codex" : "Claude Code") isn't on PATH",
                              icon: "exclamationmark.triangle", tint: .orange, primary: {})]
         }
         // Here ↵ always runs, even with no arguments typed.
         let prompt = item.title
         item.section = cmd.argumentHint ?? "Arguments"
         item.subtitle = cmd.description
-        item.primaryLabel = "Ask \(claudeAgent?.name ?? "Claude Code")"
-        item.primary = { [unowned self] in if let claude = claudeAgent { startRun(claude, p, prompt) } }
+        item.primary = { [unowned self] in if let agent = agent(for: cmd) { startRun(agent, p, prompt) } }
         item.actions = nil
         return [item]
     }
