@@ -1,8 +1,8 @@
 import Foundation
 
 /// A Claude Code custom command (`.claude/commands/*.md`) or skill
-/// (`.claude/skills/<name>/SKILL.md`) that a project defines. Running one sends
-/// `/name args` to Claude Code, which expands it.
+/// (`.claude/skills/<name>/SKILL.md`) that a project or `~/.claude` defines.
+/// Running one sends `/name args` to Claude Code, which expands it.
 struct SlashCommand: Identifiable {
     enum Kind { case command, skill }
 
@@ -11,6 +11,8 @@ struct SlashCommand: Identifiable {
     let description: String?
     let argumentHint: String?
     let url: URL
+    /// From `~/.claude` rather than the project.
+    let isPersonal: Bool
 
     var id: String { url.path }
     var invocation: String { "/" + name }
@@ -18,14 +20,23 @@ struct SlashCommand: Identifiable {
 
 enum SlashCommandScanner {
     static func scan(project: URL) -> [SlashCommand] {
-        let claude = project.appendingPathComponent(".claude", isDirectory: true)
-        let found = commands(in: claude.appendingPathComponent("commands", isDirectory: true))
-            + skills(in: claude.appendingPathComponent("skills", isDirectory: true))
+        scan(claude: project.appendingPathComponent(".claude", isDirectory: true), personal: false)
+    }
+
+    /// The user's own commands and skills, available in every project.
+    static func scanPersonal() -> [SlashCommand] {
+        scan(claude: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true),
+             personal: true)
+    }
+
+    private static func scan(claude: URL, personal: Bool) -> [SlashCommand] {
+        let found = commands(in: claude.appendingPathComponent("commands", isDirectory: true), personal: personal)
+            + skills(in: claude.appendingPathComponent("skills", isDirectory: true), personal: personal)
         return found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Every `.md` file, subfolders included; the file name is the command name.
-    private static func commands(in dir: URL) -> [SlashCommand] {
+    private static func commands(in dir: URL, personal: Bool) -> [SlashCommand] {
         guard let walker = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil,
                                                           options: [.skipsHiddenFiles]) else { return [] }
         return walker.compactMap { item in
@@ -34,11 +45,11 @@ enum SlashCommandScanner {
             let (meta, body) = frontMatter(text)
             return SlashCommand(kind: .command, name: url.deletingPathExtension().lastPathComponent,
                                 description: meta["description"] ?? firstLine(body),
-                                argumentHint: meta["argument-hint"], url: url)
+                                argumentHint: meta["argument-hint"], url: url, isPersonal: personal)
         }
     }
 
-    private static func skills(in dir: URL) -> [SlashCommand] {
+    private static func skills(in dir: URL, personal: Bool) -> [SlashCommand] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil,
                                                                     options: [.skipsHiddenFiles])) ?? []
         return folders.compactMap { folder in
@@ -47,7 +58,8 @@ enum SlashCommandScanner {
             let (meta, _) = frontMatter(text)
             if meta["user-invocable"]?.lowercased() == "false" { return nil }
             return SlashCommand(kind: .skill, name: meta["name"] ?? folder.lastPathComponent,
-                                description: meta["description"], argumentHint: meta["argument-hint"], url: url)
+                                description: meta["description"], argumentHint: meta["argument-hint"], url: url,
+                                isPersonal: personal)
         }
     }
 

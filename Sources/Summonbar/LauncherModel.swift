@@ -56,6 +56,7 @@ final class LauncherModel: ObservableObject {
     private var activeExtensionRuns: [ExtensionRun] = []
     /// Per-project `.claude` commands and skills, read again on reload and each time the launcher opens.
     private var slashCache: [URL: [SlashCommand]] = [:]
+    private var personalSlashCache: [SlashCommand]?
     private var usage = Store.loadUsage()
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
@@ -146,12 +147,14 @@ final class LauncherModel: ObservableObject {
         projects = ProjectScanner.scan(root: config.workspacesRoot)
         extensions = ExtensionCatalog.scan(config: config)
         slashCache = [:]
+        personalSlashCache = nil
     }
 
     func didShow() {
         if isRoot {
             projects = ProjectScanner.scan(root: config.workspacesRoot)
             slashCache = [:]
+            personalSlashCache = nil
             refresh()
         }
         focusTick += 1
@@ -333,7 +336,7 @@ final class LauncherModel: ObservableObject {
         let asks = askItems(q)
         let found = matches + filter(contextProject.map { project in
             extensions.map { extensionItem($0, project: project, showProject: true) }
-                + slashItems(project, showProject: true)
+                + slashItems(project, showProject: true, includePersonal: true)
         } ?? [])
         out += found.isEmpty ? asks : found + asks
         if projects.allSatisfy({ $0.name.lowercased() != q.lowercased() }), Self.slug(q) != nil, !q.contains(" ") {
@@ -415,16 +418,17 @@ final class LauncherModel: ObservableObject {
         }
         out += runs.filter { $0.projectURL == p.url }.prefix(5).map { var i = runItem($0); i.section = "Previous Runs"; return i }
         out += projectExtensionItems(p)
-        out += slashItems(p)
-        out += utilityItems(p)
-        // Typing `/name args` puts the matching commands and skills first.
+        // Typing `/name args` puts the matching commands and skills first, personal ones included.
         if prompt.hasPrefix("/") {
             let parts = prompt.dropFirst().split(separator: " ", maxSplits: 1)
             let token = parts.first.map(String.init) ?? ""
             let args = parts.count > 1 ? String(parts[1]) : ""
-            let matches = slashCommands(p).filter { token.isEmpty || Fuzzy.score(token, $0.name) != nil }
+            let matches = slashCommands(p, includePersonal: true).filter { token.isEmpty || Fuzzy.score(token, $0.name) != nil }
             out.insert(contentsOf: matches.compactMap { slashItem($0, p, args: args) }, at: 0)
+        } else {
+            out += slashItems(p)
         }
+        out += utilityItems(p)
         if agents.isEmpty {
             out.insert(ListItem(id: "noagents", section: "Run Here", title: "No coding agents found on PATH",
                                 subtitle: "Install claude, codex, gemini, opencode, cursor-agent or aider, then ⌘R",
@@ -681,15 +685,20 @@ final class LauncherModel: ObservableObject {
 
     // MARK: - Claude Code commands and skills
 
-    private func slashCommands(_ p: Project) -> [SlashCommand] {
-        if let cached = slashCache[p.url] { return cached }
-        let found = SlashCommandScanner.scan(project: p.url)
-        slashCache[p.url] = found
-        return found
+    /// Project commands and skills; personal ones from `~/.claude` only when asked, since they'd
+    /// crowd every project's list. A project item wins over a personal one with the same name.
+    private func slashCommands(_ p: Project, includePersonal: Bool = false) -> [SlashCommand] {
+        let project = slashCache[p.url] ?? SlashCommandScanner.scan(project: p.url)
+        slashCache[p.url] = project
+        guard includePersonal else { return project }
+        let personal = personalSlashCache ?? SlashCommandScanner.scanPersonal()
+        personalSlashCache = personal
+        let taken = Set(project.map(\.name))
+        return project + personal.filter { !taken.contains($0.name) }
     }
 
-    private func slashItems(_ p: Project, showProject: Bool = false) -> [ListItem] {
-        slashCommands(p).compactMap { slashItem($0, p, showProject: showProject) }
+    private func slashItems(_ p: Project, showProject: Bool = false, includePersonal: Bool = false) -> [ListItem] {
+        slashCommands(p, includePersonal: includePersonal).compactMap { slashItem($0, p, showProject: showProject) }
     }
 
     private func slashItem(_ cmd: SlashCommand, _ p: Project, args: String = "", showProject: Bool = false) -> ListItem? {
@@ -697,7 +706,8 @@ final class LauncherModel: ObservableObject {
         let prompt = args.isEmpty ? cmd.invocation : "\(cmd.invocation) \(args)"
         let wantsArguments = args.isEmpty && cmd.argumentHint != nil
         return ListItem(
-            id: "s:\(cmd.id)", section: cmd.kind == .skill ? "Claude Skills" : "Claude Commands", title: prompt,
+            id: "s:\(cmd.id)", section: (cmd.isPersonal ? "Personal " : "Claude ") + (cmd.kind == .skill ? "Skills" : "Commands"),
+            title: prompt,
             subtitle: showProject ? "in \(p.name) · ⌘K on a project to pick another" : cmd.description,
             icon: cmd.kind == .skill ? "wand.and.stars" : "slash.circle", tint: .purple, accessory: args.isEmpty ? cmd.argumentHint : nil,
             primaryLabel: wantsArguments ? "Add Arguments" : "Ask \(claude.name)",

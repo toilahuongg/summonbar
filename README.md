@@ -28,7 +28,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Hand off to the terminal.** ⌘T moves an inline conversation into your terminal (`claude --resume`, `codex resume`). ⌘↵ on a project opens the agent there right away.
 - **New projects in one line.** `new my-app: build a todo app` creates `~/Workspaces/my-app`, runs `git init`, and pre-fills the prompt.
 - **Background runs.** Hide the launcher and keep working. The menu bar shows how many agents are running.
-- **Your project's Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline.
+- **Your Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` are a `/` away.
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
 
@@ -172,6 +172,8 @@ They show up in a project's ⌘K actions and prompt screen, and in root search f
 - ↵ sends `/name` to Claude Code as an inline run. If the command has an `argument-hint`, Summonbar asks for the arguments first.
 - ⌘↵ opens it in the terminal instead. ⌘K also has Run with Arguments, Edit and Reveal in Finder. Tab goes straight to the arguments.
 - On the prompt screen, typing `/` lists the project's commands and skills; `/plan next sprint` runs `/plan` with `next sprint`.
+
+Your personal commands and skills in `~/.claude/commands` and `~/.claude/skills` work the same way, but they only appear when you type `/` on the prompt screen or search from the root, so they don't crowd every project's list. They're labelled Personal Commands / Personal Skills. When a project and `~/.claude` both define the same name, the project's wins.
 
 They always run with Claude Code, whatever `defaultAgent` is, and are hidden when `claude` isn't on your `PATH`. The files are read again each time the launcher opens.
 
