@@ -30,6 +30,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Background runs.** Hide the launcher and keep working. The menu bar shows how many agents are running.
 - **Your Claude Code commands and skills.** Anything in a project's `.claude/commands` and `.claude/skills` shows up in the launcher and runs inline; your personal ones in `~/.claude` are a `/` away.
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
+- **An app launcher too.** Installed apps show up in search with aliases, per-app global hotkeys, and quit / restart / hide / force quit / trash from ⌘K, like Raycast.
 - **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
 
 <p align="center">
@@ -98,6 +99,7 @@ Open **Settings** with ⌘, in the launcher or from the menu bar. It covers:
 - terminal and editor
 - the default agent
 - per-agent arguments
+- app aliases, hotkeys and which apps show in search
 
 Changes save to the config file and apply right away.
 
@@ -121,6 +123,19 @@ The file itself, `~/.config/summonbar/config.json`, is created on first launch:
 - `terminal`: `ghostty`, `terminal`, `iterm`, or any app name that can open `.command` files.
 - `headlessArgs` apply to inline runs. By default Claude Code can edit files but asks before running anything else, and Codex is sandboxed to the workspace. Set `"disabled": true` on an agent to hide it.
 - `extensionDirectories` (optional): extra folders to load extensions from, e.g. a team repo of shared prompts.
+- `applications` (optional), keyed by bundle identifier so the settings survive an app moving:
+
+  ```json
+  "applications": {
+    "aliases": { "com.microsoft.VSCode": "code" },
+    "hotkeys": { "com.mitchellh.ghostty": "ctrl+opt+t" },
+    "hidden": ["com.apple.Chess"],
+    "directories": ["/opt/homebrew/Caskroom"],
+    "enabled": true
+  }
+  ```
+
+  `directories` are scanned in addition to the default app folders. `enabled: false` leaves apps out of search.
 - After you edit the file by hand, use **Reload Config & Hotkey** in the menu bar.
 
 Projects are found by scanning `workspacesRoot`. If a top-level folder holds projects instead of being one (for example `~/Workspaces/acme/*`), its subfolders are listed as projects.
@@ -160,6 +175,31 @@ Keys on an extension:
 - ↵ runs the script and sends its output to the agent.
 - ⌘↵ previews the prompt first. There, ↵ sends it, ⌘↵ copies it and ⌘. stops the script. A script that fails opens the same preview so you can see why.
 - ⌘K also has Edit Script and Reveal in Finder. ⌘R picks up new or changed scripts.
+
+## Applications
+
+Apps in `/Applications`, `/System/Applications`, `~/Applications` and their subfolders are listed in the root search next to projects. Whichever matches better comes first, so `slack` opens Slack and `summonbar` the project. Names match fuzzily and by initials (`vsc` → Visual Studio Code), and apps you open from Summonbar rank higher.
+
+| Where | Key | Action |
+|---|---|---|
+| App | ↵ | Open it, or switch to it if it's running |
+| | ⌘↵ | Reveal in Finder |
+| | ⌘K | Hide / Unhide, Quit, Restart, Force Quit, Copy Path, Copy Bundle Identifier, Set Alias or Hotkey…, Hide from Search, Move to Trash |
+| Running Applications | ↵ / ⌘↵ | Quit / switch to |
+
+Commands in the root list:
+- **Applications** browses everything installed.
+- **Running Applications** lists apps with a Dock icon.
+- **Quit All Applications** asks the apps to quit, except Finder, so they can still prompt you to save.
+
+Force Quit, Quit All and Move to Trash ask for confirmation first. Apps in `/System` can't be trashed, and a running app has to be quit before it can be.
+
+**Settings › Applications** has, for each app:
+- an alias (an exact alias match always wins)
+- a global hotkey, which opens the app and hides it again if it's already frontmost
+- whether it shows in search
+
+There's also a switch to leave apps out of search entirely; hotkeys keep working without it.
 
 ## Claude Code commands and skills
 
@@ -202,12 +242,13 @@ Sources/Summonbar/
   HotKey.swift         global hotkey (Carbon)
   LauncherModel.swift  screens, items, navigation, actions
   Views.swift          SwiftUI UI
-  Settings.swift       Settings window (General, Agents)
+  Settings.swift       Settings window (General, Agents, Applications)
   AgentRun.swift       headless agent process + stream-json / JSONL parsing
   Extensions.swift     prompt extensions: metadata parsing, catalog, runs
   Agents.swift         agent catalog and command lines
   Projects.swift       workspace scanner, fuzzy match
   SlashCommands.swift  a project's .claude commands and skills
+  Apps.swift           installed-app scanner, open / quit / restart / trash
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
   Config.swift, Store.swift

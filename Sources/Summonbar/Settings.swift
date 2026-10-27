@@ -25,6 +25,17 @@ final class SettingsModel: ObservableObject {
         let name: String
     }
 
+    struct AppRow: Identifiable {
+        let app: InstalledApp
+        var alias: String
+        var hotkey: String
+        var visible: Bool
+
+        var id: String { app.key }
+    }
+
+    enum Tab: Hashable { case general, agents, applications }
+
     @Published var workspacesRoot = "" { didSet { scheduleSave() } }
     @Published var hotkey = "" { didSet { scheduleSave() } }
     @Published var terminal = "" { didSet { scheduleSave() } }
@@ -32,12 +43,18 @@ final class SettingsModel: ObservableObject {
     @Published var defaultAgent = "" { didSet { scheduleSave() } }
     @Published var gitInitNewProjects = true { didSet { scheduleSave() } }
     @Published var agents: [AgentRow] = [] { didSet { scheduleSave() } }
+    @Published var appsInSearch = true { didSet { scheduleSave() } }
+    @Published var appRows: [AppRow] = [] { didSet { scheduleSave() } }
+    @Published var appFilter = ""
+    @Published var tab = Tab.general
     @Published private(set) var launchAtLogin = false
     @Published private(set) var error: String?
 
     /// Reloads the app from config.json; returns an error to show, if any.
     var apply: () -> String? = { nil }
     var pauseHotKey: (Bool) -> Void = { _ in }
+    /// The launcher's scan, so Settings doesn't walk the app folders again.
+    var installedApps: () -> [InstalledApp] = { [] }
 
     private var loading = false
     private var saveWork: DispatchWorkItem?
@@ -59,6 +76,12 @@ final class SettingsModel: ObservableObject {
                             args: Args.join(override?.args ?? []),
                             headlessArgs: Args.join(override?.headlessArgs ?? []),
                             configured: override != nil)
+        }
+        let settings = config.applications
+        let installed = installedApps()
+        appsInSearch = settings.isEnabled
+        appRows = (installed.isEmpty ? AppScanner.scan(extraDirectories: settings.directoryURLs) : installed).map { app in
+            AppRow(app: app, alias: settings.alias(app) ?? "", hotkey: settings.hotkey(app) ?? "", visible: !settings.isHidden(app))
         }
         launchAtLogin = SMAppService.mainApp.status == .enabled
         error = nil
@@ -97,6 +120,21 @@ final class SettingsModel: ObservableObject {
             override.disabled = row.enabled ? nil : true
             config.agents[row.id] = override
         }
+        // Merge, so entries for apps that aren't installed right now are kept.
+        var apps = config.applications
+        var aliases = apps.aliases ?? [:], hotkeys = apps.hotkeys ?? [:]
+        var hidden = Set(apps.hidden ?? [])
+        for row in appRows {
+            let alias = row.alias.trimmingCharacters(in: .whitespaces)
+            aliases[row.id] = alias.isEmpty ? nil : alias
+            hotkeys[row.id] = row.hotkey.isEmpty ? nil : row.hotkey
+            if row.visible { hidden.remove(row.id) } else { hidden.insert(row.id) }
+        }
+        apps.enabled = appsInSearch ? nil : false
+        apps.aliases = aliases
+        apps.hotkeys = hotkeys
+        apps.hidden = hidden.sorted()
+        config.applications = apps
         do {
             try config.save()
             error = apply()
@@ -135,6 +173,12 @@ final class SettingsModel: ObservableObject {
         panel.prompt = "Choose"
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return url.deletingPathExtension().lastPathComponent
+    }
+
+    func matchesFilter(_ row: AppRow) -> Bool {
+        let q = appFilter.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty || [row.app.name, row.app.fileName, row.alias, row.app.bundleId ?? ""]
+            .contains { $0.localizedCaseInsensitiveContains(q) }
     }
 
     // MARK: - Choices
@@ -248,11 +292,16 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TabView {
+            TabView(selection: $model.tab) {
                 GeneralSettings(model: model)
                     .tabItem { Label("General", systemImage: "gearshape") }
+                    .tag(SettingsModel.Tab.general)
                 AgentSettings(model: model)
                     .tabItem { Label("Agents", systemImage: "sparkles") }
+                    .tag(SettingsModel.Tab.agents)
+                ApplicationSettings(model: model)
+                    .tabItem { Label("Applications", systemImage: "square.grid.2x2") }
+                    .tag(SettingsModel.Tab.applications)
             }
             .padding(.top, 8)
             footer
@@ -376,6 +425,73 @@ private struct AgentSettings: View {
     }
 }
 
+private struct ApplicationSettings: View {
+    @ObservedObject var model: SettingsModel
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Show applications in search", isOn: $model.appsInSearch)
+            } footer: {
+                Text("Hotkeys work either way. Pressing an app's hotkey while it's frontmost hides it.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                ForEach($model.appRows) { $row in
+                    if model.matchesFilter(row) {
+                        AppSettingsRow(row: $row, pauseHotKey: model.pauseHotKey)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("\(model.appRows.count) installed")
+                    Spacer()
+                    TextField("", text: $model.appFilter, prompt: Text("Filter"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                }
+                .textCase(nil)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct AppSettingsRow: View {
+    @Binding var row: SettingsModel.AppRow
+    var pauseHotKey: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(nsImage: AppControl.icon(row.app.url.path)).resizable().frame(width: 20, height: 20)
+            Text(row.app.name)
+                .lineLimit(1)
+                .foregroundStyle(row.visible ? .primary : .secondary)
+                .help(row.app.url.tildePath)
+            Spacer(minLength: 8)
+            TextField("", text: $row.alias, prompt: Text("Alias"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 90)
+            HotKeyRecorder(spec: $row.hotkey, onRecordingChange: pauseHotKey, placeholder: "Record Hotkey", minWidth: 100)
+                .controlSize(.small)
+            Button { row.hotkey = "" } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .opacity(row.hotkey.isEmpty ? 0 : 1)
+                .disabled(row.hotkey.isEmpty)
+                .help("Remove hotkey")
+            Toggle("", isOn: $row.visible)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .help("Show in search")
+        }
+    }
+}
+
 private struct AgentHeader: View {
     let agent: SettingsModel.AgentRow
 
@@ -418,6 +534,8 @@ private struct ArgsField: View {
 private struct HotKeyRecorder: View {
     @Binding var spec: String
     var onRecordingChange: (Bool) -> Void
+    var placeholder = ""
+    var minWidth: CGFloat = 130
     @State private var recording = false
     @State private var monitor: Any?
 
@@ -425,10 +543,10 @@ private struct HotKeyRecorder: View {
         Button {
             recording ? stop() : start()
         } label: {
-            Text(recording ? "Press a shortcut…" : HotKey.describe(spec))
-                .font(.system(size: 13, weight: recording ? .regular : .medium))
-                .foregroundStyle(recording ? .secondary : .primary)
-                .frame(minWidth: 130)
+            Text(recording ? "Press a shortcut…" : spec.isEmpty ? placeholder : HotKey.describe(spec))
+                .font(.system(size: 13, weight: recording || spec.isEmpty ? .regular : .medium))
+                .foregroundStyle(recording || spec.isEmpty ? .secondary : .primary)
+                .frame(minWidth: minWidth)
         }
         .onDisappear { stop() }
     }

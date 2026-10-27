@@ -29,6 +29,8 @@ enum Screen {
     case output(ExtensionRun)
     /// Takes the arguments for a project's Claude Code command or skill.
     case slash(SlashCommand, Project)
+    /// Installed apps, or only the running ones.
+    case apps(running: Bool)
 }
 
 @MainActor
@@ -57,12 +59,16 @@ final class LauncherModel: ObservableObject {
     /// Per-project `.claude` commands and skills, read again on reload and each time the launcher opens.
     private var slashCache: [URL: [SlashCommand]] = [:]
     private var personalSlashCache: [SlashCommand]?
+    private(set) var apps: [InstalledApp] = []
+    private var appUsage = Store.loadUsage(apps: true)
+    private var appScan: Task<Void, Never>?
     private var usage = Store.loadUsage()
     private var saveWork: DispatchWorkItem?
     private var toastWork: DispatchWorkItem?
 
     var hidePanel: () -> Void = {}
     var openSettings: () -> Void = {}
+    var openApplicationSettings: (InstalledApp) -> Void = { _ in }
     var runsChanged: () -> Void = {}
 
     init() {
@@ -71,6 +77,13 @@ final class LauncherModel: ObservableObject {
             let run = AgentRun(record: record, agent: agents.first { $0.id == record.agentId })
             run.onChange = { [weak self] in self?.runDidChange() }
             return run
+        }
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification,
+                     NSWorkspace.didHideApplicationNotification, NSWorkspace.didUnhideApplicationNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.runningAppsDidChange() }
+            }
         }
         refresh()
     }
@@ -104,6 +117,7 @@ final class LauncherModel: ObservableObject {
             if run.isRunning { return "\(run.ext.title) is building the prompt…" }
             return run.prompt != nil ? "Press ↵ to send to \(agent(for: run.ext)?.name ?? "the agent")" : "Press ↵ to run again"
         case .slash(let cmd, _): return cmd.argumentHint.map { "Arguments: \($0)" } ?? "Arguments for \(cmd.invocation) (optional)"
+        case .apps(let running): return running ? "Search running applications…" : "Search applications…"
         }
     }
 
@@ -117,6 +131,7 @@ final class LauncherModel: ObservableObject {
         case .argument(let ext, let project, _): return "\(ext.title) · \(project.name)"
         case .output(let run): return "\(run.ext.title) · \(run.project.name)"
         case .slash(let cmd, let project): return "\(cmd.invocation) · \(project.name)"
+        case .apps(let running): return running ? "Running Applications" : "Applications"
         }
     }
 
@@ -148,6 +163,7 @@ final class LauncherModel: ObservableObject {
         extensions = ExtensionCatalog.scan(config: config)
         slashCache = [:]
         personalSlashCache = nil
+        rescanApps()
     }
 
     func didShow() {
@@ -155,6 +171,7 @@ final class LauncherModel: ObservableObject {
             projects = ProjectScanner.scan(root: config.workspacesRoot)
             slashCache = [:]
             personalSlashCache = nil
+            rescanApps()
             refresh()
         }
         focusTick += 1
@@ -290,6 +307,7 @@ final class LauncherModel: ObservableObject {
         case .argument(let ext, let project, let values): items = argumentItems(ext, project, values)
         case .output: items = []
         case .slash(let cmd, let project): items = slashArgumentItems(cmd, project)
+        case .apps(let running): items = appListItems(runningOnly: running)
         }
         if selection >= items.count { selection = max(items.count - 1, 0) }
     }
@@ -331,8 +349,16 @@ final class LauncherModel: ObservableObject {
             return out
         }
 
-        let matches = projects.compactMap { p in Fuzzy.score(q, p.name).map { (p, $0) } }
-            .sorted { $0.1 > $1.1 }.map { projectItem($0.0) }
+        let projectMatches = projects.compactMap { p in Fuzzy.score(q, p.name).map { (p, $0) } }
+            .sorted { $0.1 > $1.1 }
+        // Scattered matches with big gaps (score ≤ 0) are noise when the query is a prompt for an agent.
+        let appMatches = config.applications.isEnabled ? matchApps(q, in: visibleApps).filter { $0.1 > 0 }.prefix(6) : []
+        let running = appMatches.isEmpty ? [:] : AppControl.running()
+        let projectItems = projectMatches.map { projectItem($0.0) }
+        let appItems = appMatches.map { appItem($0.0, running: running[$0.0.url.path]) }
+        // The section with the best match goes first, so "slack" opens Slack and "summonbar" the project.
+        let matches = (appMatches.first?.1 ?? .min) > (projectMatches.first?.1 ?? .min)
+            ? appItems + projectItems : projectItems + appItems
         let asks = askItems(q)
         let found = matches + filter(contextProject.map { project in
             extensions.map { extensionItem($0, project: project, showProject: true) }
@@ -479,6 +505,12 @@ final class LauncherModel: ObservableObject {
                      icon: "folder.badge.plus", tint: .orange, primary: { [unowned self] in query = "new " }),
             ListItem(id: "c:runs", section: "Commands", title: "Agent Runs", subtitle: "\(runs.count) runs",
                      icon: "list.bullet.rectangle", tint: .purple, primary: { [unowned self] in push(.runs) }),
+            ListItem(id: "c:apps", section: "Commands", title: "Applications", subtitle: "\(visibleApps.count) installed",
+                     icon: "square.grid.2x2", tint: .blue, primary: { [unowned self] in push(.apps(running: false)) }),
+            ListItem(id: "c:running", section: "Commands", title: "Running Applications", subtitle: "Switch to, hide or quit apps",
+                     icon: "app.badge.checkmark", tint: .green, primary: { [unowned self] in push(.apps(running: true)) }),
+            ListItem(id: "c:quitall", section: "Commands", title: "Quit All Applications", subtitle: "Everything with a Dock icon except Finder",
+                     icon: "xmark.app", tint: .red, primary: { [unowned self] in confirmQuitAll() }),
             ListItem(id: "c:workspaces", section: "Commands", title: "Open Workspaces Folder", icon: "folder",
                      primary: { [unowned self] in NSWorkspace.shared.open(config.workspacesRoot); finish() }),
             ListItem(id: "c:extensions", section: "Commands", title: "Open Extensions Folder",
@@ -569,6 +601,239 @@ final class LauncherModel: ObservableObject {
         frames = [Frame(screen: .root)]
         push(.prompt(project), query: prompt)
         flash(existed ? "\(url.tildePath) already exists — opened it" : "Created \(url.tildePath)")
+    }
+
+    // MARK: - Applications
+
+    private var visibleApps: [InstalledApp] { apps.filter { !config.applications.isHidden($0) } }
+
+    private func rescanApps() {
+        let directories = config.applications.directoryURLs
+        appScan?.cancel()
+        appScan = Task { [weak self] in
+            let found = await Task.detached(priority: .utility) { AppScanner.scan(extraDirectories: directories) }.value
+            guard let self, !Task.isCancelled, found != apps else { return }
+            apps = found
+            refresh()
+        }
+    }
+
+    private func runningAppsDidChange() {
+        switch screen {
+        case .root where !query.isEmpty, .apps: refresh()
+        default: break
+        }
+    }
+
+    /// Matches name, file name and alias; an exact alias wins, and apps opened from here rank higher.
+    private func matchApps(_ q: String, in list: [InstalledApp]) -> [(InstalledApp, Int)] {
+        let settings = config.applications
+        return list.compactMap { app -> (InstalledApp, Int)? in
+            let alias = settings.alias(app)
+            if let alias, alias.caseInsensitiveCompare(q) == .orderedSame { return (app, 5000) }
+            // "vsc" finds Visual Studio Code.
+            let words = app.name.split(whereSeparator: { $0 == " " || $0 == "-" })
+            let initials = q.count >= 2 && words.count >= q.count
+                && String(words.compactMap(\.first)).lowercased().hasPrefix(q.lowercased()) ? 1050 : nil
+            guard let best = ([app.name, app.fileName, alias].compactMap({ $0 }).compactMap({ Fuzzy.score(q, $0) }) + [initials].compactMap({ $0 })).max()
+            else { return nil }
+            return (app, best + (appUsage[app.key] != nil ? 100 : 0))
+        }.sorted { a, b in
+            a.1 != b.1 ? a.1 > b.1 : (appUsage[a.0.key] ?? .distantPast) > (appUsage[b.0.key] ?? .distantPast)
+        }
+    }
+
+    private func appListItems(runningOnly: Bool) -> [ListItem] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let running = AppControl.running()
+        let list: [InstalledApp]
+        if runningOnly {
+            // Include apps outside the scanned folders, e.g. one opened from ~/Downloads.
+            list = AppControl.quittable().compactMap(\.bundleURL).map { url in
+                apps.first { $0.url.path == url.path } ?? AppScanner.make(url)
+            }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        } else {
+            list = visibleApps
+        }
+        let ordered = q.isEmpty ? list : matchApps(q, in: list).map(\.0)
+        return ordered.map { app in
+            guard runningOnly, let process = running[app.url.path] else { return appItem(app, running: running[app.url.path]) }
+            return runningAppItem(app, process)
+        }
+    }
+
+    private func appItem(_ app: InstalledApp, running: NSRunningApplication?) -> ListItem {
+        let settings = config.applications
+        let accessory = [running != nil ? "running" : nil, settings.hotkey(app).map(HotKey.describe)]
+            .compactMap { $0 }.joined(separator: " · ")
+        return ListItem(
+            id: "app:" + app.id, section: "Applications", title: app.name, subtitle: settings.alias(app),
+            icon: app.url.path, accessory: accessory.isEmpty ? nil : accessory,
+            primaryLabel: running == nil ? "Open" : "Switch To", primary: { [unowned self] in openApp(app) },
+            secondaryLabel: "Reveal in Finder", secondary: { [unowned self] in reveal(app.url) },
+            actions: { [unowned self] in appActions(app) })
+    }
+
+    /// In Running Applications ↵ quits, like Raycast's Quit Applications.
+    private func runningAppItem(_ app: InstalledApp, _ process: NSRunningApplication) -> ListItem {
+        ListItem(
+            id: "app:" + app.id, section: "Running Applications", title: app.name,
+            subtitle: process.isHidden ? "hidden" : nil, icon: app.url.path, accessory: process.isActive ? "frontmost" : nil,
+            primaryLabel: "Quit", primary: { [unowned self] in quit(app, process) },
+            secondaryLabel: "Switch To", secondary: { [unowned self] in openApp(app) },
+            actions: { [unowned self] in appActions(app) })
+    }
+
+    private func appActions(_ app: InstalledApp) -> [ListItem] {
+        let section = app.name
+        let process = AppControl.running()[app.url.path]
+        var out = [
+            ListItem(id: "aa:open", section: section, title: process == nil ? "Open" : "Switch To", icon: "arrow.up.forward.app",
+                     tint: .blue, primary: { [unowned self] in openApp(app) }),
+        ]
+        if let process {
+            out += [
+                ListItem(id: "aa:hide", section: section, title: process.isHidden ? "Unhide" : "Hide", icon: "eye.slash",
+                         primary: { [unowned self] in
+                             _ = process.isHidden ? process.unhide() : process.hide()
+                             closeActions()
+                         }),
+                ListItem(id: "aa:quit", section: section, title: "Quit", subtitle: "The app may ask to save changes",
+                         icon: "xmark.circle", tint: .orange, primary: { [unowned self] in quit(app, process) }),
+                ListItem(id: "aa:restart", section: section, title: "Restart", icon: "arrow.clockwise", tint: .orange,
+                         primary: { [unowned self] in restart(app, process) }),
+                ListItem(id: "aa:force", section: section, title: "Force Quit", subtitle: "Unsaved changes are lost",
+                         icon: "bolt.circle", tint: .red, primary: { [unowned self] in
+                             confirm("Force Quit \(app.name)?", "Force Quit \(app.name)", icon: "bolt.circle") { [unowned self] in
+                                 closeActions()
+                                 flash(process.forceTerminate() ? "Force quit \(app.name)" : "Couldn't force quit \(app.name)")
+                             }
+                         }),
+            ]
+        }
+        out += [
+            ListItem(id: "aa:finder", section: section, title: "Reveal in Finder", icon: "finder",
+                     primary: { [unowned self] in reveal(app.url) }),
+            ListItem(id: "aa:path", section: section, title: "Copy Path", subtitle: app.url.tildePath, icon: "doc.on.doc",
+                     primary: { [unowned self] in copy(app.url.path, label: app.url.tildePath) }),
+        ]
+        if let bundleId = app.bundleId {
+            out.append(ListItem(id: "aa:bundle", section: section, title: "Copy Bundle Identifier", subtitle: bundleId,
+                                icon: "number", primary: { [unowned self] in copy(bundleId, label: bundleId) }))
+        }
+        out += [
+            ListItem(id: "aa:configure", section: section, title: "Set Alias or Hotkey…", subtitle: "Settings › Applications",
+                     icon: "keyboard", tint: .purple, primary: { [unowned self] in finish(); openApplicationSettings(app) }),
+            ListItem(id: "aa:hidden", section: section, title: "Hide from Search", subtitle: "Show it again in Settings › Applications",
+                     icon: "eye.slash", primary: { [unowned self] in hideFromSearch(app) }),
+        ]
+        if AppControl.canTrash(app) {
+            out.append(ListItem(
+                id: "aa:trash", section: section, title: "Move to Trash", subtitle: app.url.tildePath, icon: "trash", tint: .red,
+                primary: { [unowned self] in
+                    guard AppControl.running()[app.url.path] == nil else { flash("Quit \(app.name) first"); return }
+                    confirm("Move \(app.name) to Trash?", "Move \(app.name) to Trash", icon: "trash") { [unowned self] in trash(app) }
+                }))
+        }
+        return out
+    }
+
+    /// Opens or focuses an app from its global hotkey; pressing it again while the app is frontmost hides it.
+    func toggleApp(key: String) {
+        let url = apps.first { $0.key == key }?.url
+            ?? (key.hasPrefix("/") ? URL(fileURLWithPath: key) : NSWorkspace.shared.urlForApplication(withBundleIdentifier: key))
+        guard let url else { NSSound.beep(); return }
+        if let process = AppControl.running()[url.path], process.isActive {
+            process.hide()
+        } else {
+            markUsed(appKey: key)
+            AppControl.open(url)
+        }
+    }
+
+    private func openApp(_ app: InstalledApp) {
+        markUsed(appKey: app.key)
+        AppControl.open(app.url)
+        finish()
+    }
+
+    private func quit(_ app: InstalledApp, _ process: NSRunningApplication) {
+        closeActions()
+        flash(process.terminate() ? "Quitting \(app.name)…" : "\(app.name) can't be quit")
+    }
+
+    private func restart(_ app: InstalledApp, _ process: NSRunningApplication) {
+        closeActions()
+        flash("Restarting \(app.name)…")
+        Task { [weak self] in
+            if await !AppControl.restart(process, at: app.url) { self?.flash("\(app.name) didn't quit — it may be asking to save") }
+        }
+    }
+
+    private func confirmQuitAll() {
+        let targets = AppControl.quittable()
+        guard !targets.isEmpty else { flash("No apps to quit"); return }
+        let names = targets.compactMap(\.localizedName).sorted().joined(separator: ", ")
+        confirm("Quit \(targets.count) Applications?", "Quit \(targets.count) Applications", icon: "xmark.app", subtitle: names) { [unowned self] in
+            let asked = targets.filter { $0.terminate() }.count
+            closeActions()
+            flash("Asked \(asked) app\(asked == 1 ? "" : "s") to quit")
+        }
+    }
+
+    private func trash(_ app: InstalledApp) {
+        NSWorkspace.shared.recycle([app.url]) { _, error in
+            MainActor.assumeIsolated { [weak self] in
+                guard let self else { return }
+                closeActions()
+                if let error {
+                    flash("Couldn't move \(app.name) to Trash: \(error.localizedDescription)")
+                } else {
+                    apps.removeAll { $0.id == app.id }
+                    refresh()
+                    flash("Moved \(app.name) to Trash")
+                }
+            }
+        }
+    }
+
+    private func hideFromSearch(_ app: InstalledApp) {
+        var updated = Config.load()
+        updated.applications.hidden = (updated.applications.hidden ?? []).filter { $0 != app.key } + [app.key]
+        do {
+            try updated.save()
+        } catch {
+            flash("Couldn't save config.json: \(error.localizedDescription)")
+            return
+        }
+        config = updated
+        closeActions()
+        flash("\(app.name) is hidden — show it again in Settings › Applications")
+    }
+
+    /// A one-item menu that runs `action` only when picked; esc cancels.
+    private func confirm(_ title: String, _ label: String, icon: String, subtitle: String? = nil, action: @escaping () -> Void) {
+        push(.actions(title: title, items: [
+            ListItem(id: "confirm", section: title, title: label, subtitle: subtitle, icon: icon, tint: .red,
+                     primaryLabel: "Confirm", primary: action),
+            ListItem(id: "cancel", section: title, title: "Cancel", icon: "arrow.uturn.backward",
+                     primaryLabel: "Cancel", primary: { [unowned self] in back() }),
+        ]))
+    }
+
+    /// Leaves action menus and confirmations, back to the list they were opened from.
+    private func closeActions() {
+        while frames.count > 1, case .actions = screen { back() }
+    }
+
+    private func reveal(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        finish()
+    }
+
+    private func markUsed(appKey: String) {
+        appUsage[appKey] = Date()
+        Store.saveUsage(appUsage, apps: true)
     }
 
     // MARK: - Extensions
@@ -748,7 +1013,7 @@ final class LauncherModel: ObservableObject {
     private func reloadAndReport() {
         reload()
         refresh()
-        flash("Reloaded \(projects.count) projects, \(agents.count) agents, \(extensions.count) extensions")
+        flash("Reloaded \(projects.count) projects, \(agents.count) agents, \(extensions.count) extensions, \(visibleApps.count) apps")
     }
 
     private func copy(_ text: String, label: String) {

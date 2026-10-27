@@ -8,6 +8,38 @@ struct AgentOverride: Codable {
     var disabled: Bool?
 }
 
+/// The `applications` key of config.json. Apps are keyed by bundle id (or path, for apps without one).
+struct ApplicationsConfig: Codable {
+    /// Show installed apps in the root search.
+    var enabled: Bool?
+    /// Extra names to search by, e.g. "code" for Visual Studio Code.
+    var aliases: [String: String]?
+    /// Global hotkeys that open an app, e.g. "ctrl+opt+t".
+    var hotkeys: [String: String]?
+    /// Apps left out of search.
+    var hidden: [String]?
+    /// Folders to scan besides /Applications, /System/Applications and ~/Applications.
+    var directories: [String]?
+
+    var isEnabled: Bool { enabled ?? true }
+    var directoryURLs: [URL] { (directories ?? []).map { URL(fileURLWithPath: Config.expand($0), isDirectory: true) } }
+
+    func alias(_ app: InstalledApp) -> String? { aliases?[app.key].flatMap { $0.isEmpty ? nil : $0 } }
+    func hotkey(_ app: InstalledApp) -> String? { hotkeys?[app.key].flatMap { $0.isEmpty ? nil : $0 } }
+    func isHidden(_ app: InstalledApp) -> Bool { hidden?.contains(app.key) == true }
+
+    /// Nil when nothing is set, so config.json stays tidy.
+    var nonEmpty: ApplicationsConfig? {
+        var copy = self
+        if copy.aliases?.isEmpty == true { copy.aliases = nil }
+        if copy.hotkeys?.isEmpty == true { copy.hotkeys = nil }
+        if copy.hidden?.isEmpty == true { copy.hidden = nil }
+        if copy.directories?.isEmpty == true { copy.directories = nil }
+        let empty = copy.enabled == nil && copy.aliases == nil && copy.hotkeys == nil && copy.hidden == nil && copy.directories == nil
+        return empty ? nil : copy
+    }
+}
+
 /// On-disk shape of ~/.config/summonbar/config.json. Every key is optional.
 private struct ConfigFile: Codable {
     var workspacesRoot: String?
@@ -18,6 +50,7 @@ private struct ConfigFile: Codable {
     var gitInitNewProjects: Bool?
     var agents: [String: AgentOverride]?
     var extensionDirectories: [String]?
+    var applications: ApplicationsConfig?
 }
 
 struct Config {
@@ -30,6 +63,7 @@ struct Config {
     var agents: [String: AgentOverride]
     /// Extra folders of extension scripts, e.g. a team repo of shared prompts.
     var extensionDirectories: [URL]
+    var applications: ApplicationsConfig
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/summonbar", isDirectory: true)
@@ -62,7 +96,8 @@ struct Config {
             defaultAgent: file.defaultAgent ?? "claude",
             gitInitNewProjects: file.gitInitNewProjects ?? true,
             agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user },
-            extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) }
+            extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) },
+            applications: file.applications ?? ApplicationsConfig()
         )
     }
 
@@ -90,7 +125,8 @@ struct Config {
             defaultAgent: defaultAgent,
             gitInitNewProjects: gitInitNewProjects,
             agents: agents,
-            extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath)
+            extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath),
+            applications: applications.nonEmpty
         ))
     }
 

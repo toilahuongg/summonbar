@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController!
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
+    private var appHotKeys: [HotKey] = []
     private let settings = SettingsWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,11 +28,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = PanelController(model: model)
         model.runsChanged = { [weak self] in self?.updateStatusItem() }
         model.openSettings = { [weak self] in self?.settings.show() }
+        model.openApplicationSettings = { [weak self] app in
+            guard let self else { return }
+            settings.model.tab = .applications
+            settings.model.appFilter = app.name
+            settings.show()
+        }
         settings.model.apply = { [weak self] in self?.applyConfig() }
+        settings.model.installedApps = { [weak self] in self?.model.apps ?? [] }
+        // Recording a shortcut must not trigger the one it's replacing.
         settings.model.pauseHotKey = { [weak self] paused in
             guard let self else { return }
             hotKey = nil
-            if !paused { registerHotKey(report: false) }
+            appHotKeys = []
+            if !paused {
+                registerHotKey(report: false)
+                registerAppHotKeys()
+            }
         }
         installMainMenu()
 
@@ -40,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.imagePosition = .imageLeading
         rebuildMenu()
         registerHotKey()
+        registerAppHotKeys()
 
         // open -a Summonbar --args --ask claude ~/Workspaces/foo "fix the build"
         // open -a Summonbar --args --query "new my-app"
@@ -74,14 +88,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return hotKey != nil
     }
 
+    /// Per-app hotkeys from config.json. Returns the ones that couldn't be registered.
+    @discardableResult
+    private func registerAppHotKeys() -> [String] {
+        appHotKeys = []
+        var failed: [String] = []
+        for (key, spec) in (model.config.applications.hotkeys ?? [:]).sorted(by: { $0.key < $1.key }) where !spec.isEmpty {
+            if let hotKey = HotKey(spec, handler: { [weak self] in self?.model.toggleApp(key: key) }) {
+                appHotKeys.append(hotKey)
+            } else {
+                failed.append(HotKey.describe(spec))
+            }
+        }
+        return failed
+    }
+
     /// Re-reads config.json and applies it. Returns an error for the Settings window.
     private func applyConfig() -> String? {
         model.reload()
         model.refresh()
         hotKey = nil
+        appHotKeys = []
         let ok = registerHotKey(report: false)
+        let failed = (ok ? [] : [HotKey.describe(model.config.hotkey)]) + registerAppHotKeys()
         rebuildMenu()
-        return ok ? nil : "Couldn't register \(HotKey.describe(model.config.hotkey)) — another app may be using it."
+        return failed.isEmpty ? nil : "Couldn't register \(failed.joined(separator: ", ")) — another app may be using it."
     }
 
     /// Accessory apps have no visible menu bar, but text fields still need the

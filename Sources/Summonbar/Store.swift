@@ -24,6 +24,7 @@ enum Store {
 
     private static let runsURL = directory.appendingPathComponent("runs.json")
     private static let usageURL = directory.appendingPathComponent("usage.json")
+    private static let appUsageURL = directory.appendingPathComponent("app-usage.json")
     static let maxRuns = 100
 
     static func loadRuns() -> [RunRecord] {
@@ -36,14 +37,15 @@ enum Store {
         try? data.write(to: runsURL, options: .atomic)
     }
 
-    static func loadUsage() -> [String: Date] {
-        guard let data = try? Data(contentsOf: usageURL) else { return [:] }
+    /// Last-used dates for projects, or for apps opened from the launcher.
+    static func loadUsage(apps: Bool = false) -> [String: Date] {
+        guard let data = try? Data(contentsOf: apps ? appUsageURL : usageURL) else { return [:] }
         return (try? decoder.decode([String: Date].self, from: data)) ?? [:]
     }
 
-    static func saveUsage(_ usage: [String: Date]) {
+    static func saveUsage(_ usage: [String: Date], apps: Bool = false) {
         guard let data = try? encoder.encode(usage) else { return }
-        try? data.write(to: usageURL, options: .atomic)
+        try? data.write(to: apps ? appUsageURL : usageURL, options: .atomic)
     }
 
     private static let encoder: JSONEncoder = {
