@@ -32,6 +32,10 @@ final class AgentRun: ObservableObject, Identifiable {
     @Published private(set) var live = ""
     @Published private(set) var status: RunStatus
     @Published private(set) var sessionId: String?
+    /// Permission rules for what Claude Code just wasn't allowed to do; Allow & Retry grants them.
+    @Published private(set) var deniedRules: [String] = []
+    /// Rules granted so far, passed on every later send.
+    private(set) var allowedTools: [String] = []
 
     var onChange: (() -> Void)?
 
@@ -70,6 +74,7 @@ final class AgentRun: ObservableObject, Identifiable {
         title = record.title
         entries = record.entries
         sessionId = record.sessionId
+        allowedTools = record.allowedTools ?? []
         status = record.status == .running ? .stopped : record.status
     }
 
@@ -91,7 +96,7 @@ final class AgentRun: ObservableObject, Identifiable {
     var record: RunRecord {
         RunRecord(id: id, agentId: agentId, agentName: agentName, projectPath: projectURL.path,
                   projectName: projectName, title: title, createdAt: createdAt, sessionId: sessionId,
-                  status: status, entries: entries)
+                  status: status, entries: entries, allowedTools: allowedTools.isEmpty ? nil : allowedTools)
     }
 
     var isRunning: Bool { status == .running }
@@ -106,9 +111,10 @@ final class AgentRun: ObservableObject, Identifiable {
         guard let agent, !isRunning else { return }
         if title.isEmpty { title = display ?? prompt }
         append(Entry(kind: .user, text: display ?? prompt))
+        deniedRules = []
 
         let resume = agent.canResume ? sessionId : nil
-        let (args, stdin) = agent.headlessInvocation(prompt: prompt, resume: resume)
+        let (args, stdin) = agent.headlessInvocation(prompt: prompt, resume: resume, allowed: allowedTools)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: agent.binary)
         process.arguments = args
@@ -165,6 +171,15 @@ final class AgentRun: ObservableObject, Identifiable {
                 try? handle.close()
             }
         }
+    }
+
+    /// Grants what was denied for the rest of this run and asks the agent to try again.
+    func allowAndRetry() {
+        let rules = deniedRules
+        guard !rules.isEmpty, canFollowUp else { return }
+        allowedTools += rules.filter { !allowedTools.contains($0) }
+        send("I've allowed \(rules.joined(separator: ", ")). Retry what was denied, then carry on.",
+             display: "Allowed \(rules.joined(separator: ", "))")
     }
 
     func stop() {
@@ -294,6 +309,13 @@ final class AgentRun: ObservableObject, Identifiable {
             }
         case "result":
             flushLive()
+            let denials = obj["permission_denials"] as? [[String: Any]] ?? []
+            let rules = denials.flatMap { Self.allowRules(tool: $0["tool_name"] as? String ?? "",
+                                                          input: $0["tool_input"] as? [String: Any] ?? [:]) }
+            deniedRules = rules.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+            if !deniedRules.isEmpty {
+                append(Entry(kind: .error, text: "Not allowed without asking: \(deniedRules.joined(separator: ", "))"))
+            }
             let isError = obj["is_error"] as? Bool ?? false
             if isError {
                 sawResultError = true
@@ -307,6 +329,44 @@ final class AgentRun: ObservableObject, Identifiable {
             append(Entry(kind: .info, text: parts.joined(separator: " · ")))
         default:
             break
+        }
+    }
+
+    /// Commands whose second word picks the action, so `git status` doesn't also allow `git push`.
+    private static let twoWordCommands: Set<String> = ["git", "gh", "npm", "pnpm", "yarn", "bun", "npx", "cargo",
+                                                       "swift", "go", "docker", "kubectl", "brew", "uv", "pip", "pip3"]
+    /// Read-only commands Claude Code already runs without asking.
+    private static let readOnlyCommands: Set<String> = ["cd", "ls", "cat", "head", "tail", "grep", "wc", "echo", "pwd"]
+
+    /// Claude Code permission rules that would have let a denied tool call through.
+    /// Bash gets a prefix rule per command in the line, like the "don't ask again" choice.
+    static func allowRules(tool: String, input: [String: Any]) -> [String] {
+        func absolute(_ path: String) -> String { "/" + path }  // `//path` is an absolute path in a rule
+        switch tool {
+        case "Bash":
+            let command = input["command"] as? String ?? ""
+            let separators = CharacterSet(charactersIn: "&|;\n")
+            return command.components(separatedBy: separators).compactMap { part in
+                let words = part.split(whereSeparator: \.isWhitespace).map(String.init)
+                    .drop { $0.contains("=") || $0 == "(" }
+                guard var name = words.first?.trimmingCharacters(in: CharacterSet(charactersIn: "()")),
+                      !name.isEmpty, !readOnlyCommands.contains(name) else { return nil }
+                if twoWordCommands.contains(name), let action = words.dropFirst().first, !action.hasPrefix("-") {
+                    name += " " + action
+                }
+                return "Bash(\(name):*)"
+            }
+        case "Read", "Glob", "Grep":
+            guard let path = input["file_path"] as? String ?? input["path"] as? String, path.hasPrefix("/") else { return [tool] }
+            return ["Read(\(absolute(path))\(tool == "Read" ? "" : "/**"))"]
+        case "Edit", "Write", "MultiEdit", "NotebookEdit":
+            guard let path = input["file_path"] as? String ?? input["notebook_path"] as? String, path.hasPrefix("/") else { return [tool] }
+            return ["Edit(\(absolute(path)))"]
+        case "WebFetch":
+            guard let host = (input["url"] as? String).flatMap(URL.init(string:))?.host else { return [tool] }
+            return ["WebFetch(domain:\(host))"]
+        default:
+            return tool.isEmpty ? [] : [tool]
         }
     }
 

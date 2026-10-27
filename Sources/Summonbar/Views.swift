@@ -46,7 +46,7 @@ struct LauncherView: View {
 
     @ViewBuilder private var content: some View {
         if case .run(let run) = model.screen {
-            RunView(run: run)
+            RunView(run: run) { model.allowAndRetry(run) }
         } else if case .output(let run) = model.screen {
             ExtensionOutputView(run: run)
         } else if case .translate(let translation) = model.screen {
@@ -227,6 +227,7 @@ struct StatusIcon: View {
 
 struct RunView: View {
     @ObservedObject var run: AgentRun
+    var onAllow: () -> Void = {}
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -234,6 +235,13 @@ struct RunView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(run.entries) { entry in
                         EntryView(entry: entry)
+                    }
+                    if !run.deniedRules.isEmpty && run.canFollowUp {
+                        Button(action: onAllow) {
+                            Label("Allow & Retry", systemImage: "checkmark.shield")
+                        }
+                        .controlSize(.small)
+                        .help("Allow \(run.deniedRules.joined(separator: ", ")) for the rest of this run, then try again")
                     }
                     if !run.live.isEmpty {
                         MarkdownText(run.live)

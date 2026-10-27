@@ -154,7 +154,11 @@ final class LauncherModel: ObservableObject {
     var hints: [(label: String, keys: String)] {
         if case .run(let run) = screen {
             var h: [(String, String)] = []
-            if run.isRunning { h.append(("Stop", "⌘.")) } else if run.canFollowUp { h.append(("Send", "↵")) }
+            if run.isRunning {
+                h.append(("Stop", "⌘."))
+            } else if run.canFollowUp {
+                h.append((query.isEmpty && !run.deniedRules.isEmpty ? "Allow & Retry" : "Send", "↵"))
+            }
             if run.agent != nil { h.append(("Continue in \(config.terminalName)", "⌘T")) }
             h.append(("Back", "esc"))
             return h
@@ -593,6 +597,7 @@ final class LauncherModel: ObservableObject {
 
     private func sendFollowUp(_ run: AgentRun) {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty, !run.deniedRules.isEmpty { allowAndRetry(run); return }
         guard !text.isEmpty else { return }
         guard run.canFollowUp else {
             flash(run.isRunning ? "Wait for the agent to finish, or ⌘. to stop" : "Continue this one in the terminal with ⌘T")
@@ -603,6 +608,13 @@ final class LauncherModel: ObservableObject {
         runs.removeAll { $0 === run }
         runs.insert(run, at: 0)
         run.send(text)
+    }
+
+    func allowAndRetry(_ run: AgentRun) {
+        guard run.canFollowUp else { return }
+        runs.removeAll { $0 === run }
+        runs.insert(run, at: 0)
+        run.allowAndRetry()
     }
 
     private func continueInTerminal(_ run: AgentRun) {

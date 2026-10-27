@@ -11,6 +11,8 @@ struct RunRecord: Codable {
     var sessionId: String?
     var status: RunStatus
     var entries: [Entry]
+    /// Claude Code permission rules granted with Allow & Retry.
+    var allowedTools: [String]?
 }
 
 /// Persists agent runs and project usage under ~/Library/Application Support/Summonbar.

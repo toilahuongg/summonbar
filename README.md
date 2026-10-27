@@ -27,7 +27,7 @@
 Coding agents live in terminals. That's great for long sessions, but most tasks are short: "add a flag", "why is this test failing", "scaffold a new app". Summonbar gets you from that thought to a running agent in the right folder in about two keystrokes, and lets you leave it running in the background.
 
 - **Every project, one keystroke away.** Summonbar scans `~/Workspaces` (including group folders like `~/Workspaces/acme/*`) and ranks projects by what you used last.
-- **Inline agent runs.** The answer streams into the launcher, with tool calls, file edits, command output and cost. Press ↵ to send a follow-up in the same session.
+- **Inline agent runs.** The answer streams into the launcher, with tool calls, file edits, command output and cost. Press ↵ to send a follow-up in the same session. When Claude Code isn't allowed to run something, ↵ on an empty field allows it for the rest of the run and retries.
 - **Hand off to the terminal.** ⌘T moves an inline conversation into your terminal (`claude --resume`, `codex resume`). ⌘↵ on a project opens the agent there right away.
 - **New projects in one line.** `new my-app: build a todo app` creates `~/Workspaces/my-app`, runs `git init`, and pre-fills the prompt.
 - **Every session, not just Summonbar's.** "Agent Sessions" lists your Claude Code and Codex history, including the ones you started in a terminal or editor. Open one to read it and send a follow-up inline, or ⌘↵ to resume it in the terminal.
@@ -97,6 +97,7 @@ Default hotkey: **⇧⌘Space** (change it in Settings).
 | | `tr <text>` or `translate <text>` | Translate it inline; ↵ copies the translation |
 | Agent Sessions | ↵ / ⌘↵ | Open the session and continue it inline / resume it in the terminal |
 | Agent run | ↵ | Send a follow-up (resumes the same agent session) |
+| | ↵ on an empty field, after a denial | Allow what Claude Code was denied and retry |
 | | ⌘T | Continue this conversation in the terminal (`claude --resume` / `codex resume`) |
 | | ⌘. | Stop the run |
 

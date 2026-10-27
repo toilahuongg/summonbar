@@ -71,11 +71,13 @@ struct Agent: Identifiable, Hashable {
 
     /// Arguments for an inline run, plus the text to feed on stdin (if any).
     /// Prompts go through stdin where supported so text starting with `-`
-    /// can't be mistaken for a flag.
-    func headlessInvocation(prompt: String, resume: String?) -> (args: [String], stdin: String?) {
+    /// can't be mistaken for a flag. `allowed` are Claude Code permission rules
+    /// the user granted after a denial.
+    func headlessInvocation(prompt: String, resume: String?, allowed: [String] = []) -> (args: [String], stdin: String?) {
         switch id {
         case "claude":
             var a = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"] + Self.skillDirArgs
+            a += allowed.map { "--allowedTools=\($0)" }
             if let resume { a += ["--resume", resume] }
             return (a + headlessArgs, prompt)
         case "codex":
