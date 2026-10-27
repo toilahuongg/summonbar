@@ -1,5 +1,5 @@
 #!/bin/bash
-# Render assets/logo.svg into Resources/AppIcon.icns and assets/logo.png (needs Google Chrome).
+# Render assets/logo.svg into Resources/AppIcon.icns and assets/logo.png, and assets/social-preview.svg into its PNG (needs Google Chrome).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,4 +19,7 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o Resources/AppIcon.icns
 sips -z 512 512 "$TMP/1024.png" --out assets/logo.png >/dev/null
-echo "Wrote Resources/AppIcon.icns and assets/logo.png"
+
+"$CHROME" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1 \
+  --window-size=1280,640 --screenshot="$PWD/assets/social-preview.png" "file://$PWD/assets/social-preview.svg" 2>/dev/null
+echo "Wrote Resources/AppIcon.icns, assets/logo.png and assets/social-preview.png"
