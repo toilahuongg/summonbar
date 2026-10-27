@@ -43,6 +43,7 @@ final class AgentRun: ObservableObject, Identifiable {
     private var stopRequested = false
     private var sawResultError = false
     private var startedItems = Set<String>()
+    private var piCost = 0.0
     private var started = Date()
 
     init(agent: Agent, project: Project) {
@@ -111,6 +112,7 @@ final class AgentRun: ObservableObject, Identifiable {
         stopRequested = false
         sawResultError = false
         startedItems = []
+        piCost = 0
         started = Date()
 
         out.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -216,13 +218,17 @@ final class AgentRun: ObservableObject, Identifiable {
         case .plain:
             let text = String(decoding: data, as: UTF8.self)
             live += (live.isEmpty ? "" : "\n") + text
-        case .claude, .codex:
+        case .claude, .codex, .pi:
             guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
                 let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespaces)
                 if !text.isEmpty { append(Entry(kind: .info, text: text)) }
                 return
             }
-            if agent.format == .claude { handleClaude(obj) } else { handleCodex(obj) }
+            switch agent.format {
+            case .claude: handleClaude(obj)
+            case .codex: handleCodex(obj)
+            default: handlePi(obj)
+            }
         }
     }
 
@@ -252,7 +258,7 @@ final class AgentRun: ObservableObject, Identifiable {
                 case "tool_use":
                     let name = block["name"] as? String ?? "Tool"
                     let input = block["input"] as? [String: Any] ?? [:]
-                    append(Entry(kind: .tool, text: name, detail: summarizeClaudeTool(name, input)))
+                    append(Entry(kind: .tool, text: name, detail: summarizeTool(name, input)))
                 default:
                     break
                 }
@@ -288,11 +294,12 @@ final class AgentRun: ObservableObject, Identifiable {
         }
     }
 
-    private func summarizeClaudeTool(_ name: String, _ input: [String: Any]) -> String {
+    private func summarizeTool(_ name: String, _ input: [String: Any]) -> String {
         func str(_ key: String) -> String? { input[key] as? String }
         if let path = str("file_path") ?? str("notebook_path") { return relative(path) }
         if let command = str("command") { return command }
         if let pattern = str("pattern") { return pattern + (str("path").map { "  in " + relative($0) } ?? "") }
+        if let path = str("path") { return relative(path) }
         if let url = str("url") { return url }
         if let query = str("query") { return query }
         if let description = str("description") { return description }
@@ -355,6 +362,53 @@ final class AgentRun: ObservableObject, Identifiable {
             append(Entry(kind: .error, text: message))
         case "error":
             append(Entry(kind: .error, text: obj["message"] as? String ?? "Error"))
+        default:
+            break
+        }
+    }
+
+    /// pi's `--mode json` events, which omp emits too.
+    private func handlePi(_ obj: [String: Any]) {
+        switch obj["type"] as? String {
+        case "session":
+            if let sid = obj["id"] as? String { sessionId = sid }
+        case "message_update":
+            guard let event = obj["assistantMessageEvent"] as? [String: Any],
+                  event["type"] as? String == "text_delta",
+                  let delta = event["delta"] as? String else { return }
+            live += delta
+        case "message_end":
+            guard let message = obj["message"] as? [String: Any], message["role"] as? String == "assistant" else { return }
+            live = ""
+            let content = message["content"] as? [[String: Any]] ?? []
+            let text = content.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { append(Entry(kind: .assistant, text: text)) }
+            if let cost = ((message["usage"] as? [String: Any])?["cost"] as? [String: Any])?["total"] as? Double { piCost += cost }
+            if message["stopReason"] as? String == "error" {
+                sawResultError = true
+                append(Entry(kind: .error, text: message["errorMessage"] as? String ?? "Error"))
+            }
+        case "tool_execution_start":
+            let name = obj["toolName"] as? String ?? "Tool"
+            append(Entry(kind: .tool, text: name.prefix(1).uppercased() + name.dropFirst(),
+                         detail: summarizeTool(name, obj["args"] as? [String: Any] ?? [:])))
+        case "tool_execution_end":
+            let isError = obj["isError"] as? Bool ?? false
+            let content = (obj["result"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+            let text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { append(Entry(kind: .output, text: clip(text), isError: isError)) }
+        case "auto_retry_end":
+            if obj["success"] as? Bool == false {
+                sawResultError = true
+                append(Entry(kind: .error, text: obj["finalError"] as? String ?? "Retries failed"))
+            }
+        case "agent_end":
+            flushLive()
+            var parts = [sawResultError ? "Failed" : "Done", elapsed]
+            if piCost > 0 { parts.append(String(format: "$%.3f", piCost)) }
+            append(Entry(kind: .info, text: parts.joined(separator: " · ")))
         default:
             break
         }

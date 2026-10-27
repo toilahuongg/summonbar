@@ -49,6 +49,7 @@ Summonbar uses whichever of these are on your `PATH`, with the same login-shell 
 |---|---|---|---|
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) | ✅ streamed | ✅ | ✅ |
 | [Codex CLI](https://github.com/openai/codex) | ✅ streamed | ✅ | ✅ |
+| [Pi](https://github.com/badlogic/pi-mono), [Oh My Pi](https://github.com/can1357/oh-my-pi) (`omp`) | ✅ streamed | ✅ | ✅ |
 | Gemini CLI, Cursor Agent, opencode, Aider | plain output | ✅ | — |
 
 ## Install

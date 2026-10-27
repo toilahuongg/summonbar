@@ -5,6 +5,8 @@ enum OutputFormat {
     case claude
     /// `codex exec --json`
     case codex
+    /// `pi -p --mode json`, which omp (Oh My Pi) shares
+    case pi
     /// Plain stdout text.
     case plain
 }
@@ -35,6 +37,14 @@ struct Agent: Identifiable, Hashable {
                 cmd += args
                 if let prompt { cmd.append(prompt) }
             }
+        case "pi":
+            cmd += args
+            if let resume { cmd += ["--session", resume] }
+            if let prompt { cmd.append(prompt) }
+        case "omp":
+            cmd += args
+            if let resume { cmd += ["--resume", resume] }
+            if let prompt { cmd.append(prompt) }
         case "gemini":
             cmd += args
             if let prompt { cmd += ["-i", prompt] }
@@ -62,6 +72,10 @@ struct Agent: Identifiable, Hashable {
                 return (["exec"] + headlessArgs + ["resume", "--json", "--skip-git-repo-check", resume, "-"], prompt)
             }
             return (["exec", "--json", "--skip-git-repo-check"] + headlessArgs + ["-"], prompt)
+        case "pi", "omp":
+            var a = ["-p", "--mode", "json"]
+            if let resume { a += [id == "pi" ? "--session" : "--resume", resume] }
+            return (a + headlessArgs, prompt)
         case "gemini":
             return (headlessArgs + ["-p", prompt], nil)
         case "opencode":
@@ -85,6 +99,8 @@ enum AgentCatalog {
     static let specs: [Spec] = [
         Spec(id: "claude", name: "Claude Code", binary: "claude", icon: "sparkle", format: .claude),
         Spec(id: "codex", name: "Codex", binary: "codex", icon: "hexagon", format: .codex),
+        Spec(id: "pi", name: "Pi", binary: "pi", icon: "function", format: .pi),
+        Spec(id: "omp", name: "Oh My Pi", binary: "omp", icon: "circle.hexagongrid", format: .pi),
         Spec(id: "gemini", name: "Gemini CLI", binary: "gemini", icon: "diamond", format: .plain),
         Spec(id: "cursor-agent", name: "Cursor Agent", binary: "cursor-agent", icon: "cursorarrow.rays", format: .plain),
         Spec(id: "opencode", name: "opencode", binary: "opencode", icon: "chevron.left.forwardslash.chevron.right", format: .plain),

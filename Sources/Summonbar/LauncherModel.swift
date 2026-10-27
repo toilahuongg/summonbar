@@ -483,7 +483,7 @@ final class LauncherModel: ObservableObject {
         out += utilityItems(p)
         if agents.isEmpty {
             out.insert(ListItem(id: "noagents", section: "Run Here", title: "No coding agents found on PATH",
-                                subtitle: "Install claude, codex, gemini, opencode, cursor-agent or aider, then ⌘R",
+                                subtitle: "Install claude, codex, pi, omp, gemini, opencode, cursor-agent or aider, then ⌘R",
                                 icon: "exclamationmark.triangle", tint: .orange, primary: {}), at: 0)
         }
         return out
