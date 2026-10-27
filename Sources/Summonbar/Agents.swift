@@ -22,12 +22,23 @@ struct Agent: Identifiable, Hashable {
 
     var canResume: Bool { format != .plain }
 
+    /// `--add-dir` for the personal skill folders. Claude Code only reads inside the
+    /// project without asking, and a headless run can't ask, so a skill's references
+    /// and scripts would be denied. The `=` form keeps the variadic flag off the prompt.
+    private static var skillDirArgs: [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [".claude/skills", ".agents/skills"]
+            .map { home.appendingPathComponent($0, isDirectory: true).path }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .map { "--add-dir=\($0)" }
+    }
+
     /// Command for an interactive session in a terminal.
     func interactiveCommand(prompt: String?, resume: String?) -> [String] {
         var cmd = [binary]
         switch id {
         case "claude":
-            cmd += args
+            cmd += Self.skillDirArgs + args
             if let resume { cmd += ["--resume", resume] }
             if let prompt { cmd.append(prompt) }
         case "codex":
@@ -64,7 +75,7 @@ struct Agent: Identifiable, Hashable {
     func headlessInvocation(prompt: String, resume: String?) -> (args: [String], stdin: String?) {
         switch id {
         case "claude":
-            var a = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+            var a = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages"] + Self.skillDirArgs
             if let resume { a += ["--resume", resume] }
             return (a + headlessArgs, prompt)
         case "codex":
