@@ -52,7 +52,21 @@ Summonbar uses whichever of these are on your `PATH`, with the same login-shell 
 
 ## Install
 
-Requires macOS 14+ and a Swift toolchain. The Xcode Command Line Tools are enough; you don't need full Xcode.
+Requires macOS 14+.
+
+### Download
+
+1. Grab `Summonbar-<version>.zip` from the [latest release](https://github.com/toilahuongg/summonbar/releases/latest). It's a universal build for Apple Silicon and Intel.
+2. Unzip it and move `Summonbar.app` to `/Applications` (or `~/Applications`).
+3. The app is ad-hoc signed but not notarized, so macOS blocks it the first time you open it. Right-click the app and choose **Open**, then **Open** again in the dialog. On macOS 15, if there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**. Or clear the quarantine flag from a terminal:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Summonbar.app
+   ```
+
+### Build from source
+
+You need a Swift toolchain. The Xcode Command Line Tools are enough; you don't need full Xcode.
 
 ```bash
 git clone https://github.com/toilahuongg/summonbar.git
