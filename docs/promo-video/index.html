@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Summonbar Promo</title>
+<!-- Deterministic promo video. Every frame is a pure function of time:
+     render.cjs calls window.seek(t) and screenshots #stage; the browser
+     preview plays the same timeline in real time. No CSS transitions or
+     keyframe animations — they would not be frame-accurate. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=block" rel="stylesheet">
+<style>
+:root {
+  /* Brand tokens, from assets/logo.svg and social-preview.svg (service bell) */
+  --bg0: #2A2722;
+  --bg1: #1E1C19;
+  --bg2: #131210;
+  --ink: #F1E7D4;
+  --ink-soft: rgba(241, 231, 212, .72);
+  --ink-faint: rgba(241, 231, 212, .42);
+  --amber: #F0A21E;
+  --amber-deep: #D9861A;
+  --gold: #FFD27A;
+  --display: "Inter", -apple-system, sans-serif;
+  --serif: "Instrument Serif", Georgia, serif;
+  --sans: "Inter", -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  /* macOS launcher look (the app's own SwiftUI panel) */
+  --sys: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --sysmono: "SF Mono", Menlo, ui-monospace, monospace;
+  --m-text: #1d1d1f;
+  --m-sub: #6e6e73;
+  --m-faint: #8e8e93;
+  --W: 1600px; --H: 900px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #0c0b09; }
+body { display: grid; place-items: center; min-height: 100vh; overflow: hidden; }
+.render body { display: block; }
+
+#stage {
+  position: relative; width: var(--W); height: var(--H); overflow: hidden;
+  background: linear-gradient(135deg, var(--bg0) 0%, var(--bg1) 55%, var(--bg2) 100%);
+  color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  transform-origin: center; flex: none;
+}
+#halo { position: absolute; width: 1100px; height: 1100px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(240,162,30,.16) 0%, rgba(217,134,26,.05) 50%, rgba(217,134,26,0) 70%); }
+#twinkles { position: absolute; inset: 0; }
+#twinkles svg { position: absolute; }
+.abs { position: absolute; }
+[data-a] { opacity: 0; }
+.scene { position: absolute; inset: 0; display: none; }
+.grad { background: linear-gradient(90deg, var(--ink) 0%, var(--ink) 45%, var(--gold) 80%, var(--amber) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+/* ---------- Copy column ---------- */
+.copy {
+  position: absolute; left: 130px; top: 0; width: 500px; height: 100%;
+  display: flex; flex-direction: column; justify-content: center; gap: 22px; padding-bottom: 30px;
+}
+.eyebrow { font-family: var(--mono); font-size: 16px; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; color: var(--amber); }
+.headline { font-family: var(--display); font-weight: 700; font-size: 62px; line-height: 1.04; letter-spacing: -.035em; }
+.headline em { font-family: var(--serif); font-style: italic; font-weight: 400; font-size: 1.16em; letter-spacing: -.01em;
+  background: linear-gradient(90deg, var(--gold), var(--amber)); -webkit-background-clip: text; background-clip: text; color: transparent; padding-right: 6px; }
+.body { font-size: 21px; line-height: 1.55; color: var(--ink-soft); max-width: 460px; }
+.body code { font-family: var(--mono); font-size: .86em; color: var(--ink); background: rgba(241,231,212,.1); padding: 1px 7px; border-radius: 6px; }
+
+/* ---------- Footer chapter markers ---------- */
+#footer {
+  position: absolute; left: 130px; right: 100px; bottom: 40px;
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: var(--mono); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint);
+}
+#chapters { display: flex; gap: 24px; }
+#chapters span { padding-bottom: 5px; border-bottom: 2px solid transparent; }
+#chapters span.on { color: var(--ink); border-bottom-color: var(--amber); }
+
+/* ---------- Launcher panel (rebuilt from Views.swift) ---------- */
+.panel {
+  position: absolute; display: flex; flex-direction: column; overflow: hidden;
+  background: rgba(234, 233, 238, .97); color: var(--m-text); border-radius: 22px; font-family: var(--sys);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.35), 0 0 0 2px rgba(0,0,0,.25), 0 40px 90px -20px rgba(0,0,0,.65), 0 0 120px -10px rgba(240,162,30,.22);
+}
+.ph { position: relative; height: 66px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 20px; border-bottom: 1px solid rgba(0,0,0,.09); font-size: 23px; }
+.ph .glass { width: 24px; height: 24px; color: var(--m-sub); flex: none; }
+.crumb { font-size: 14px; font-weight: 500; padding: 5px 10px; border-radius: 7px; background: rgba(0,0,0,.08); white-space: nowrap; }
+.field { position: relative; flex: 1; height: 30px; white-space: nowrap; }
+.field > span { position: absolute; left: 0; top: 0; line-height: 30px; }
+.ph-hold { color: #a1a1a6; }
+.pc { position: relative; flex: 1; overflow: hidden; }
+.pf { height: 46px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-top: 1px solid rgba(0,0,0,.09); font-size: 14px; color: var(--m-sub); }
+.pf .spark { width: 15px; height: 15px; color: #a855f7; flex: none; }
+.pf .lbl { position: relative; width: 240px; height: 18px; }
+.pf .lbl > span { position: absolute; left: 0; top: 0; white-space: nowrap; }
+.pf .sp { flex: 1; }
+.hint { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.hint:first-of-type { color: var(--m-text); }
+.vr { width: 1px; height: 16px; background: rgba(0,0,0,.14); }
+.kc { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 21px; padding: 0 6px; border-radius: 5px; background: rgba(0,0,0,.08); font-size: 12.5px; font-weight: 500; color: var(--m-text); }
+.list { position: absolute; left: 0; right: 0; top: 0; padding-top: 6px; }
+.sec { font-size: 14px; font-weight: 600; color: var(--m-sub); padding: 12px 26px 6px; }
+.row { position: relative; display: flex; align-items: center; gap: 14px; height: 52px; margin: 0 10px; padding: 0 14px; border-radius: 11px; white-space: nowrap; }
+.row.sel { background: #b4c2dd; }
+.row .t { font-size: 18.5px; }
+.row .s { font-size: 15px; color: var(--m-sub); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.row .r { margin-left: auto; font-size: 15px; color: var(--m-faint); flex: none; padding-left: 12px; }
+.ic { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.ic svg { width: 19px; height: 19px; }
+.c-blue { background: rgba(10,132,255,.16); color: #1f6fe5; }
+.c-purple { background: rgba(175,82,222,.17); color: #9845d6; }
+.c-orange { background: rgba(255,149,0,.2); color: #d97e00; }
+.c-green { background: rgba(52,199,89,.2); color: #1f9a46; }
+.c-indigo { background: rgba(88,86,214,.17); color: #4f4cc9; }
+.c-gray { background: rgba(0,0,0,.08); color: #555; }
+.typing::after { content: ""; display: inline-block; width: 2px; height: 1.05em; background: #2a6fe5; margin-left: 1px; vertical-align: -.16em; }
+
+/* run view */
+.run { position: absolute; inset: 0; padding: 18px 26px; font-size: 17px; line-height: 1.5; }
+.run .tool { display: flex; align-items: center; gap: 10px; font-family: var(--sysmono); font-size: 15px; color: var(--m-text); }
+.run .tool svg { width: 16px; height: 16px; color: var(--m-sub); }
+.run .code { font-family: var(--sysmono); font-size: 14px; line-height: 1.6; color: #6b6b70; padding: 6px 0 10px 26px; white-space: pre; }
+.run .code b { font-weight: 400; color: #a1a1a6; display: inline-block; width: 26px; }
+.run .note { font-family: var(--sysmono); font-size: 14px; color: #6b6b70; padding: 4px 0 12px 26px; }
+.run .ans { font-size: 18px; color: var(--m-text); min-height: 54px; }
+.run ul { list-style: none; margin-top: 8px; font-size: 17px; }
+.run li { margin-top: 3px; }
+.run li::before { content: "– "; color: var(--m-sub); }
+.run .meta { margin-top: 12px; font-size: 14px; color: var(--m-faint); }
+.st { width: 22px; height: 22px; flex: none; position: relative; }
+.st > * { position: absolute; inset: 0; }
+
+/* ---------- Terminal ---------- */
+.term {
+  position: absolute; background: #14120f; border-radius: 16px; overflow: hidden; color: #ece4d3;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 40px 90px -20px rgba(0,0,0,.7);
+  font-family: var(--mono); font-size: 18px; line-height: 1.75;
+}
+.term .bar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: rgba(255,255,255,.05); font-family: var(--sys); font-size: 14px; color: rgba(255,255,255,.5); }
+.term .bar i { width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,.18); }
+.term .bar span { flex: 1; text-align: center; margin-right: 60px; }
+.term .tb { padding: 18px 24px; }
+.term .p { color: var(--amber); }
+.term .p b { color: var(--gold); font-weight: 400; }
+.term .o { color: rgba(231,227,244,.55); }
+.term .box { margin: 6px 0 10px; border: 1px solid #d97757; border-radius: 8px; padding: 6px 16px; color: #e7e3f4; display: inline-block; }
+.term .box .o { font-size: 15px; }
+.term .typing::after { background: #e7e3f4; }
+
+/* bell "ding" ripples */
+.ring { width: 0; height: 0; }
+.ring::before { content: ""; position: absolute; left: -150px; top: -150px; width: 300px; height: 300px; border-radius: 50%; border: 3px solid var(--amber); }
+/* misc */
+.keycap { position: absolute; height: 92px; min-width: 92px; padding: 0 26px; border-radius: 18px; display: grid; place-items: center;
+  font-family: var(--sys); font-size: 38px; font-weight: 500; color: #fff;
+  background: linear-gradient(#3b3731, #25221e); box-shadow: inset 0 1px 0 rgba(255,255,255,.25), inset 0 -4px 0 rgba(0,0,0,.4), 0 18px 40px -10px rgba(0,0,0,.6); }
+.callout { position: absolute; padding: 9px 16px; border-radius: 999px; font-size: 16px; font-weight: 600; color: #1E1C19; background: var(--amber); white-space: nowrap; box-shadow: 0 12px 30px -8px rgba(0,0,0,.5); }
+.sheet { position: absolute; border-radius: 14px; background: #fff; color: var(--m-text); font-family: var(--sys); box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 30px 70px -20px rgba(0,0,0,.6); }
+.chk { display: flex; align-items: center; gap: 12px; font-size: 17px; height: 40px; }
+.chk i { width: 24px; height: 24px; border-radius: 50%; background: #30b45a; display: grid; place-items: center; flex: none; }
+.chk i svg { width: 14px; height: 14px; color: #fff; }
+.chk code { font-family: var(--sysmono); font-size: 15px; }
+.menu { position: absolute; border-radius: 12px; background: rgba(240,239,244,.97); color: var(--m-text); font-family: var(--sys); padding: 6px; box-shadow: 0 0 0 1px rgba(0,0,0,.2), 0 30px 60px -16px rgba(0,0,0,.7); }
+.menu .mh { font-size: 13px; font-weight: 600; color: var(--m-sub); padding: 6px 12px 4px; }
+.menu .mi { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-radius: 7px; font-size: 15px; white-space: nowrap; }
+.menu .mi .s { color: var(--m-sub); }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.pill { position: absolute; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 9px; background: rgba(241,231,212,.14); box-shadow: inset 0 0 0 1px rgba(241,231,212,.22); font-family: var(--sys); font-size: 17px; font-weight: 600; }
+.pill svg { width: 18px; height: 18px; }
+.spin { display: block; border-radius: 50%; border: 2.5px solid rgba(0,0,0,.12); border-top-color: #8b5cf6; }
+.snip { position: absolute; background: #14120f; border-radius: 14px; padding: 18px 22px; font-family: var(--mono); font-size: 14.5px; line-height: 1.7; color: #e7e3f4; white-space: pre;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.14), 0 30px 70px -18px rgba(0,0,0,.75); }
+.snip .c { color: rgba(231,227,244,.45); }
+.snip .k { color: var(--amber); }
+.snip .q { color: #86efac; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="halo"></div>
+  <div id="twinkles"></div>
+
+  <!-- ============ S1 · Intro (0–5) ============ -->
+  <section class="scene" data-scene="0,5">
+    <div class="abs" id="introGlow" style="left:650px;top:120px;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(240,162,30,.45),rgba(240,162,30,0) 70%)"></div>
+    <div class="abs ring" data-ring=".8" style="left:800px;top:270px"></div>
+    <div class="abs ring" data-ring="1.05" style="left:800px;top:270px"></div>
+    <img class="abs" src="../../assets/logo.svg" data-a=".25,4.4,pop,.6" style="left:670px;top:140px;width:260px;height:260px">
+    <div class="abs grad" data-a="1.0,4.45,up" style="left:0;right:0;top:430px;text-align:center;font-family:var(--display);font-weight:800;font-size:124px;letter-spacing:-.045em;line-height:1.1">Summonbar</div>
+    <div class="abs" data-a="1.55,4.5,up" style="left:0;right:0;top:590px;text-align:center;font-size:28px;font-weight:500;color:var(--ink-soft)">A launcher for macOS with coding agents built in.</div>
+    <div class="abs" data-a="2.2,4.55,fade" style="left:0;right:0;top:660px;text-align:center;font-family:var(--mono);font-size:15px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint)">Claude Code · Codex · Gemini CLI · opencode · Aider</div>
+  </section>
+
+  <!-- ============ S2 · The problem (5–12) ============ -->
+  <section class="scene" data-scene="5,12">
+    <div class="copy">
+      <div class="eyebrow" data-a="5.1,11.4">Why it exists</div>
+      <h1 class="headline" data-a="5.25,11.45">Short tasks.<br><em>Long detours.</em></h1>
+      <p class="body" data-a="5.45,11.5">Coding agents live in terminals. But most tasks are one line: add a flag, fix a test, scaffold an app. Getting there takes a dozen steps.</p>
+    </div>
+    <div class="term" data-a="5.35,11.55,right" style="left:690px;top:150px;width:810px;height:560px">
+      <div class="bar"><i></i><i></i><i></i><span>zsh</span></div>
+      <div class="tb">
+        <div data-a="5.8,,fade,.05"><span class="p">~ ❯ </span><span data-type="5.9,6.5">cd ~/Workspaces</span></div>
+        <div data-a="6.7,,fade,.05"><span class="p">~/Workspaces ❯ </span><span data-type="6.8,6.95">ls</span></div>
+        <div class="o" data-a="7.05,,fade,.1">acme/  billing-api/  dotfiles/  landing-page/<br>summonbar/  weather-cli/  …</div>
+        <div data-a="7.45,,fade,.05"><span class="p">~/Workspaces ❯ </span><span data-type="7.55,8.05">cd weather-cli</span></div>
+        <div data-a="8.25,,fade,.05"><span class="p">~/W/<b>weather-cli</b> ❯ </span><span data-type="8.35,8.65">claude</span></div>
+        <div data-a="8.85,,fade,.15"><div class="box">✻ Welcome to Claude Code<br><span class="o">cwd: ~/Workspaces/weather-cli</span></div></div>
+        <div data-a="9.3,,fade,.05"><span class="p">&gt; </span><span data-type="9.4,10.3">add a --units flag</span></div>
+      </div>
+      <div class="abs" data-a="5.9,,fade" style="right:22px;top:58px;text-align:right;font-family:var(--sys)">
+        <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.45)">Steps so far</div>
+        <div data-count="0|5.9,6.1,1|6.8,7.0,2|7.55,7.75,3|8.35,8.55,4|9.4,9.6,5" data-fmt="int" style="font-size:44px;font-weight:700;color:#FF8A5C;line-height:1.1">0</div>
+      </div>
+    </div>
+    <div class="callout" data-a="10.5,11.5,pop" data-rot="-3" style="left:740px;top:680px;background:var(--ink)">…and your editor just lost focus.</div>
+  </section>
+
+  <!-- ============ S3 · Summon (12–19) ============ -->
+  <section class="scene" data-scene="12,19">
+    <div class="copy">
+      <div class="eyebrow" data-a="12.1,18.4">01 · Summon</div>
+      <h1 class="headline" data-a="12.25,18.45">Every project,<br><em>one key away.</em></h1>
+      <p class="body" data-a="12.45,18.5">Press <code>⇧⌘Space</code> anywhere. Summonbar lists every project in <code>~/Workspaces</code>, ranked by what you used last.</p>
+    </div>
+    <div class="keycap" data-a="12.3,13.05,pop,.4,.25" data-press="12.75" style="left:870px;top:400px">⇧</div>
+    <div class="keycap" data-a="12.38,13.05,pop,.4,.25" data-press="12.75" style="left:985px;top:400px">⌘</div>
+    <div class="keycap" data-a="12.46,13.05,pop,.4,.25" data-press="12.75" style="left:1100px;top:400px;width:260px">space</div>
+
+    <div class="panel" data-a="13.1,18.55,scale,.45" style="left:690px;top:150px;width:810px;height:580px">
+      <div class="ph">
+        <svg class="glass" data-icon="glass"></svg>
+        <div class="field">
+          <span class="ph-hold" data-a="13.1,13.95,fade,.01,.05">Search projects, or ask an agent…</span>
+          <span data-type="14.0,14.6">weather</span>
+        </div>
+      </div>
+      <div class="pc">
+        <div class="list" data-a="13.1,13.95,fade,.01,.1">
+          <div class="sec">Projects</div>
+          <div class="row sel"><span class="ic c-blue" data-icon="folder"></span><span class="t">weather-cli</span><span class="s">Rust</span><span class="r">3 hr ago</span></div>
+          <div class="row"><span class="ic c-blue" data-icon="folder"></span><span class="t">landing-page</span><span class="s">TypeScript</span><span class="r">Yesterday</span></div>
+          <div class="row"><span class="ic c-blue" data-icon="folder"></span><span class="t">billing-api</span><span class="s">Go</span><span class="r">2 days ago</span></div>
+          <div class="row"><span class="ic c-blue" data-icon="folder"></span><span class="t">summonbar</span><span class="s">Swift</span><span class="r">4 days ago</span></div>
+          <div class="sec">Commands</div>
+          <div class="row"><span class="ic c-gray" data-icon="plus"></span><span class="t">New Project</span><span class="s">Create a folder in ~/Workspaces</span></div>
+          <div class="row"><span class="ic c-gray" data-icon="clock"></span><span class="t">Agent Runs</span><span class="s">24 runs</span></div>
+        </div>
+        <div class="list">
+          <div class="sec" data-a="14.25,,fade,.2">Projects</div>
+          <div class="row sel" data-a="14.25,,up,.35"><span class="ic c-blue" data-icon="folder"></span><span class="t">weather-cli</span><span class="s">Rust</span><span class="r">3 hr ago</span></div>
+          <div class="sec" data-a="14.4,,fade,.2">Ask Agent</div>
+          <div class="row" data-a="14.45,,up,.35"><span class="ic c-purple" data-icon="sparkle"></span><span class="t">Ask Claude Code: weather</span><span class="s">in landing-page · Tab on a project to pick another</span></div>
+          <div class="row" data-a="14.55,,up,.35"><span class="ic c-purple" data-icon="hexagon"></span><span class="t">Ask Codex: weather</span><span class="s">in landing-page · Tab on a project to pick another</span></div>
+          <div class="sec" data-a="14.65,,fade,.2">Create</div>
+          <div class="row" data-a="14.7,,up,.35"><span class="ic c-orange" data-icon="folderplus"></span><span class="t">Create Project “weather”</span><span class="s">~/Workspaces/weather</span></div>
+        </div>
+      </div>
+      <div class="pf">
+        <svg class="spark" data-icon="sparkles"></svg><div class="lbl"><span>Summonbar</span></div><div class="sp"></div>
+        <div class="hint">Ask Agent <span class="kc" data-press="17.6">↵</span></div><div class="vr"></div>
+        <div class="hint">Open Claude Code in Ghostty <span class="kc">⌘↵</span></div><div class="vr"></div>
+        <div class="hint">Actions <span class="kc">⌘K</span></div>
+      </div>
+    </div>
+    <div class="callout" data-a="15.3,18.4,pop" style="left:1290px;top:94px">Used last, listed first ↓</div>
+  </section>
+
+  <!-- ============ S4 · Ask inline (19–28) ============ -->
+  <section class="scene" data-scene="19,28">
+    <div class="copy">
+      <div class="eyebrow" data-a="19.1,27.4">02 · Ask</div>
+      <h1 class="headline" data-a="19.25,27.45">Answers stream<br><em>right in the bar.</em></h1>
+      <p class="body" data-a="19.45,27.5">Claude Code or Codex runs in the right folder. Tool calls, file edits and the answer show up inline, and <code>↵</code> sends a follow-up.</p>
+    </div>
+    <div class="panel" data-a="19.3,27.55,right" style="left:690px;top:130px;width:810px;height:620px">
+      <div class="ph">
+        <div class="crumb" style="position:relative;width:215px;height:28px">
+          <span class="abs" data-a="19.3,21.3,fade,.01,.05" style="left:10px;top:5px">weather-cli</span>
+          <span class="abs" data-a="21.3,,fade,.2" style="left:10px;top:5px">Claude Code · weather-cli</span>
+        </div>
+        <div class="field">
+          <span class="ph-hold" data-a="19.3,19.65,fade,.01,.05">What should the agent do in weather-cli?</span>
+          <span data-a="19.3,21.25,fade,.01,.05"><span data-type="19.7,21.0">add a --units flag (metric or imperial)</span></span>
+          <span class="ph-hold" data-a="21.3,26.25,fade,.15,.05">Claude Code is working…</span>
+          <span class="ph-hold" data-a="26.3,,fade,.2">Send a follow-up…</span>
+        </div>
+        <div class="st">
+          <span class="spin" id="runSpin" data-a="21.3,26.2,fade,.2,.1"></span>
+          <svg data-icon="okcircle" data-a="26.3,,pop" style="color:#30b45a"></svg>
+        </div>
+      </div>
+      <div class="pc">
+        <div class="run">
+          <div class="tool" data-a="21.9,,up,.4"><svg data-icon="eye"></svg>Read src/main.rs</div>
+          <div class="code" data-a="22.3,,wipe,.7"><b>3</b>fn main() {
+<b>4</b>    let city = env::args().nth(1).unwrap_or_else(|| "San Francisco".into());
+<b>5</b>    let temp_c = 18.5;</div>
+          <div class="tool" data-a="23.2,,up,.4"><svg data-icon="pencil"></svg>Write src/main.rs</div>
+          <div class="note" data-a="23.5,,fade">The file src/main.rs has been updated successfully.</div>
+          <div class="ans" data-a="24.0,,fade,.05"><span data-type="24.05,25.35">I added a --units flag to src/main.rs with hand-written argument parsing, so there are no new dependencies.</span></div>
+          <ul>
+            <li data-a="25.45,,up,.4"><b>Imperial:</b> converts the temperature to °F (18.5°C shows as 65.3°F).</li>
+            <li data-a="25.75,,up,.4"><b>Bad values:</b> print an error and exit with code 2.</li>
+          </ul>
+          <div class="meta" data-a="26.3,,fade">Done · 19.0s · 11 turns</div>
+        </div>
+      </div>
+      <div class="pf">
+        <svg class="spark" data-icon="sparkles"></svg>
+        <div class="lbl"><span data-a="19.3,21.3,fade,.01,.05">Summonbar</span><span data-a="21.3,26.2,fade,.15,.1">1 agent running</span><span data-a="26.3,,fade,.2">Summonbar</span></div>
+        <div class="sp"></div>
+        <div class="hint">Send <span class="kc" data-press="21.15">↵</span></div><div class="vr"></div>
+        <div class="hint">Continue in Ghostty <span class="kc">⌘T</span></div><div class="vr"></div>
+        <div class="hint">Back <span class="kc">esc</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ S5 · Hand off + background (28–35) ============ -->
+  <section class="scene" data-scene="28,35">
+    <div class="copy">
+      <div class="eyebrow" data-a="28.1,34.4">03 · Hand off</div>
+      <h1 class="headline" data-a="28.25,34.45">Keep it going,<br><em>your way.</em></h1>
+      <p class="body" data-a="28.45,34.5"><code>⌘T</code> moves the conversation into your terminal. Or hide the bar and let agents keep working in the background.</p>
+    </div>
+    <div class="panel" data-a="28.3,31.7,right" style="left:690px;top:140px;width:810px;height:113px">
+      <div class="ph">
+        <div class="crumb">Claude Code · weather-cli</div>
+        <div class="field"><span class="ph-hold">Send a follow-up…</span></div>
+        <div class="st"><svg data-icon="okcircle" style="color:#30b45a"></svg></div>
+      </div>
+      <div class="pf" style="border-top:0">
+        <svg class="spark" data-icon="sparkles"></svg><div class="lbl"><span>Summonbar</span></div><div class="sp"></div>
+        <div class="hint">Send <span class="kc">↵</span></div><div class="vr"></div>
+        <div class="hint" style="color:var(--m-text)">Continue in Ghostty <span class="kc" data-press="29.0" style="background:var(--gold)">⌘T</span></div><div class="vr"></div>
+        <div class="hint">Back <span class="kc">esc</span></div>
+      </div>
+    </div>
+    <div class="term" data-a="29.35,34.55,up" style="left:690px;top:300px;width:810px;height:400px">
+      <div class="bar"><i></i><i></i><i></i><span>weather-cli — claude</span></div>
+      <div class="tb">
+        <div><span class="p">~/W/<b>weather-cli</b> ❯ </span><span data-type="29.7,30.5">claude --resume 7c1e9a42</span></div>
+        <div data-a="30.75,,fade,.2"><div class="box">✻ Claude Code<br><span class="o">Resumed conversation · add a --units flag</span></div></div>
+        <div data-a="31.1,,fade,.05"><span class="p">&gt; </span><span data-type="31.2,32.0">now add a --city flag too</span></div>
+      </div>
+    </div>
+    <div class="pill" data-a="32.0,34.5,pop" style="left:1418px;top:84px"><svg data-icon="sparkles"></svg><span data-count="1|32.2,32.4,2|32.6,32.8,3" data-fmt="int">1</span></div>
+    <div class="menu" data-a="32.35,34.5,down,.45" style="left:1040px;top:132px;width:460px">
+      <div class="mh">Agent Runs</div>
+      <div class="mi"><span class="dot" style="background:#a855f7"></span>Claude Code · weather-cli<span class="s">— now add a --city flag</span></div>
+      <div class="mi"><span class="dot" style="background:#a855f7"></span>Codex · billing-api<span class="s">— add rate limiting</span></div>
+      <div class="mi" data-a="32.75,,fade,.2"><span class="dot" style="background:#a855f7"></span>Claude Code · landing-page<span class="s">— fix the failing test</span></div>
+    </div>
+  </section>
+
+  <!-- ============ S6 · Create (35–41) ============ -->
+  <section class="scene" data-scene="35,41">
+    <div class="copy">
+      <div class="eyebrow" data-a="35.1,40.4">04 · Create</div>
+      <h1 class="headline" data-a="35.25,40.45">New projects<br><em>in one line.</em></h1>
+      <p class="body" data-a="35.45,40.5">Type <code>new todo-app: …</code> and Summonbar makes the folder, runs <code>git init</code> and hands the task to your agent.</p>
+    </div>
+    <div class="panel" data-a="35.3,40.55,right" style="left:690px;top:150px;width:810px;height:300px">
+      <div class="ph">
+        <svg class="glass" data-icon="glass"></svg>
+        <div class="field">
+          <span class="ph-hold" data-a="35.3,35.75,fade,.01,.05">Search projects, or ask an agent…</span>
+          <span data-type="35.8,37.4">new todo-app: build a todo app in SwiftUI</span>
+        </div>
+      </div>
+      <div class="pc">
+        <div class="list">
+          <div class="sec" data-a="36.0,,fade,.2">Create</div>
+          <div class="row sel" data-a="36.0,37.45,fade,.2,.05"><span class="ic c-orange" data-icon="folderplus"></span><span class="t">New project: type a name</span><span class="s">new &lt;name&gt;  or  new &lt;name&gt;: &lt;what to build&gt;</span></div>
+        </div>
+        <div class="list">
+          <div class="sec" style="visibility:hidden">Create</div>
+          <div class="row sel" data-a="37.5,,fade,.2"><span class="ic c-orange" data-icon="folderplus"></span><span class="t">Create Project “todo-app”</span><span class="s">~/Workspaces/todo-app · then ask: build a todo app in SwiftUI</span></div>
+        </div>
+      </div>
+      <div class="pf">
+        <svg class="spark" data-icon="sparkles"></svg><div class="lbl"><span>Summonbar</span></div><div class="sp"></div>
+        <div class="hint">Create Project <span class="kc" data-press="38.0">↵</span></div><div class="vr"></div>
+        <div class="hint">Actions <span class="kc">⌘K</span></div>
+      </div>
+    </div>
+    <div class="sheet" data-a="38.25,40.55,up" style="left:960px;top:500px;width:520px;padding:20px 24px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><span class="ic c-blue" data-icon="folder"></span><span style="font-size:20px;font-weight:600">todo-app</span><span style="margin-left:auto;font-size:14px;color:var(--m-sub)">~/Workspaces</span></div>
+      <div class="chk" data-a="38.55,,up,.4"><i data-icon="check"></i>Folder created</div>
+      <div class="chk" data-a="38.95,,up,.4"><i data-icon="check"></i><code>git init</code></div>
+      <div class="chk" data-a="39.35,,up,.4"><i data-icon="check"></i>Prompt ready for Claude Code</div>
+    </div>
+  </section>
+
+  <!-- ============ S7 · Reuse commands, skills, extensions (41–47) ============ -->
+  <section class="scene" data-scene="41,47">
+    <div class="copy">
+      <div class="eyebrow" data-a="41.1,46.4">05 · Reuse</div>
+      <h1 class="headline" data-a="41.25,46.45">Your commands<br><em>and skills, inline.</em></h1>
+      <p class="body" data-a="41.45,46.5">A project's <code>.claude</code> commands and skills show up in the list, next to small scripts that gather context for the agent.</p>
+    </div>
+    <div class="panel" data-a="41.3,46.55,right" style="left:690px;top:120px;width:810px;height:600px">
+      <div class="ph">
+        <div class="crumb">weather-cli</div>
+        <div class="field">
+          <span class="ph-hold" data-a="41.3,41.65,fade,.01,.05">What should the agent do in weather-cli?</span>
+          <span data-type="41.7,41.75">/</span>
+        </div>
+      </div>
+      <div class="pc">
+        <div class="list">
+          <div class="sec" data-a="41.85,,fade,.2">Commands</div>
+          <div class="row" data-a="41.85,,up,.35" data-sel="41.85,42.9"><span class="ic c-purple" data-icon="slash"></span><span class="t">/review</span><span class="s">Review the current diff</span></div>
+          <div class="row" data-a="41.92,,up,.35" data-sel="42.9,43.3"><span class="ic c-purple" data-icon="slash"></span><span class="t">/plan</span><span class="s">Plan the next step</span><span class="r">&lt;goal&gt;</span></div>
+          <div class="sec" data-a="42.0,,fade,.2">Skills</div>
+          <div class="row" data-a="42.0,,up,.35" data-sel="43.3,43.7"><span class="ic c-purple" data-icon="book"></span><span class="t">/release-notes</span><span class="s">Draft release notes from merged PRs</span></div>
+          <div class="sec" data-a="42.1,,fade,.2">Extensions</div>
+          <div class="row" data-a="42.1,,up,.35" data-sel="43.7,44.1"><span class="ic c-green" data-icon="seal"></span><span class="t">Review Uncommitted Changes</span></div>
+          <div class="row" data-a="42.17,,up,.35" data-sel="44.1,44.5"><span class="ic c-green" data-icon="doc"></span><span class="t">Write Commit Message</span></div>
+          <div class="row" data-a="42.24,,up,.35" data-sel="44.5,47"><span class="ic c-green" data-icon="wrench"></span><span class="t">Fix Failing Tests</span></div>
+        </div>
+      </div>
+      <div class="pf">
+        <svg class="spark" data-icon="sparkles"></svg>
+        <div class="lbl"><span data-a="41.3,45.3,fade,.01,.05">Summonbar</span><span data-a="45.3,,fade,.2">1 agent running</span></div>
+        <div class="sp"></div>
+        <div class="hint">Run <span class="kc" data-press="45.1">↵</span></div><div class="vr"></div>
+        <div class="hint">Preview Prompt <span class="kc">⌘↵</span></div><div class="vr"></div>
+        <div class="hint">Actions <span class="kc">⌘K</span></div>
+      </div>
+    </div>
+    <div class="snip" data-a="44.6,46.55,up" data-rot="1.5" style="left:1060px;top:560px;width:470px"><span class="c">#!/bin/bash</span>
+<span class="c"># @summonbar.title</span> <span class="k">Fix Failing Tests</span>
+<span class="c"># @summonbar.icon</span>  <span class="k">wrench.and.screwdriver</span>
+echo <span class="q">"Fix the failing tests:"</span>
+swift test 2&gt;&amp;1 | tail -80</div>
+  </section>
+
+  <!-- ============ S8 · Apps + translate (47–52.5) ============ -->
+  <section class="scene" data-scene="47,52.5">
+    <div class="copy">
+      <div class="eyebrow" data-a="47.1,51.9">06 · Everyday</div>
+      <h1 class="headline" data-a="47.25,51.95">A launcher<br><em>for the rest, too.</em></h1>
+      <p class="body" data-a="47.45,52.0">Open apps by their initials and give them hotkeys. Type <code>tr</code> and any text to translate it as you type.</p>
+    </div>
+    <div class="panel" data-a="47.3,52.05,right" style="left:690px;top:170px;width:810px;height:330px">
+      <div class="ph">
+        <svg class="glass" data-icon="glass"></svg>
+        <div class="field">
+          <span class="ph-hold" data-a="47.3,47.55,fade,.01,.05">Search projects, or ask an agent…</span>
+          <span data-a="47.3,49.2,fade,.01,.05"><span data-type="47.6,47.95">vsc</span></span>
+          <span data-a="49.3,,fade,.01"><span data-type="49.4,50.4">tr bonjour tout le monde</span></span>
+        </div>
+      </div>
+      <div class="pc">
+        <div class="list" data-a="48.0,49.2,fade,.2,.1">
+          <div class="sec">Applications</div>
+          <div class="row sel"><span class="ic" style="background:#2a8cdf;color:#fff" data-icon="code"></span><span class="t">Visual Studio Code</span><span class="s">Application</span><span class="r">⌃⌥C</span></div>
+          <div class="row"><span class="ic c-gray" data-icon="grid"></span><span class="t">Applications</span><span class="s">Browse everything installed</span></div>
+        </div>
+        <div class="list">
+          <div class="sec" data-a="50.0,,fade,.2">Translate</div>
+          <div class="row sel" data-a="50.0,,up,.35"><span class="ic c-indigo" data-icon="bubble"></span><span class="t">Hello everyone</span><span class="s">French → English · ↵ copies</span></div>
+        </div>
+      </div>
+      <div class="pf">
+        <svg class="spark" data-icon="sparkles"></svg>
+        <div class="lbl"><span data-a="47.3,51.15,fade,.01,.05">Summonbar</span><span data-a="51.15,,fade,.2" style="color:var(--m-text)">Copied “Hello everyone”</span></div>
+        <div class="sp"></div>
+        <div class="hint" style="position:relative;width:118px;height:21px">
+          <span class="abs" data-a="47.3,49.2,fade,.01,.05" style="right:0;top:0;display:flex;gap:7px;align-items:center">Open <span class="kc" data-press="48.7">↵</span></span>
+          <span class="abs" data-a="49.3,,fade,.01" style="right:0;top:0;display:flex;gap:7px;align-items:center">Copy <span class="kc" data-press="51.0">↵</span></span>
+        </div><div class="vr"></div>
+        <div class="hint">Actions <span class="kc">⌘K</span></div>
+      </div>
+    </div>
+    <div class="callout" data-a="48.25,49.15,pop" style="left:1180px;top:520px">vsc → Visual Studio Code ↑</div>
+  </section>
+
+  <!-- ============ S9 · Outro (52.5–57, holds) ============ -->
+  <section class="scene" data-scene="52.5,57">
+    <div class="abs" id="outroGlow" style="left:670px;top:110px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(240,162,30,.42),rgba(240,162,30,0) 70%)"></div>
+    <div class="abs ring" data-ring="53.2" style="left:800px;top:240px"></div>
+    <div class="abs ring" data-ring="53.45" style="left:800px;top:240px"></div>
+    <img class="abs" src="../../assets/logo.svg" data-a="52.7,,pop,.6" style="left:690px;top:130px;width:220px;height:220px">
+    <div class="abs grad" data-a="53.1,,up" style="left:0;right:0;top:370px;text-align:center;font-family:var(--display);font-weight:800;font-size:112px;letter-spacing:-.045em;line-height:1.1">Summonbar</div>
+    <div class="abs" data-a="53.5,,up" style="left:0;right:0;top:515px;text-align:center;font-family:var(--serif);font-style:italic;font-size:42px;color:var(--gold)">Press a hotkey. Pick a project. Type a task.</div>
+    <div class="abs" data-a="54.0,,fade" style="left:0;right:0;top:600px;text-align:center;font-family:var(--mono);font-size:16px;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)">Native Swift · No dependencies · Open source</div>
+    <div class="abs" data-a="54.5,,up" style="left:0;right:0;top:660px;text-align:center"><span style="display:inline-block;padding:12px 26px;border-radius:999px;background:rgba(241,231,212,.08);box-shadow:inset 0 0 0 1px rgba(241,231,212,.22);font-family:var(--mono);font-size:20px">github.com/toilahuongg/summonbar</span></div>
+  </section>
+
+  <div id="footer" data-a="12,52.3,fade">
+    <span>Summonbar</span>
+    <span id="chapters">
+      <span data-chapter="12,19">01 Summon</span>
+      <span data-chapter="19,28">02 Ask</span>
+      <span data-chapter="28,35">03 Hand off</span>
+      <span data-chapter="35,41">04 Create</span>
+      <span data-chapter="41,47">05 Reuse</span>
+      <span data-chapter="47,52.5">06 Everyday</span>
+    </span>
+  </div>
+</div>
+
+<div id="controls" style="position:fixed;left:16px;right:16px;bottom:12px;display:flex;gap:12px;align-items:center;font:13px monospace;color:#cfc6e4">
+  <button id="play" style="font:inherit;padding:4px 10px">Pause</button>
+  <input id="scrub" type="range" min="0" step="0.01" value="0" style="flex:1">
+  <span id="clock">0.00</span>
+</div>
+
+<script>
+/* ===================== timeline config ===================== */
+const DURATION = 57;
+const STAGE = { w: 1600, h: 900 };
+const FONTS = ['400 20px "Inter"', '500 20px "Inter"', '600 20px "Inter"', '700 20px "Inter"', '800 20px "Inter"',
+  '400 20px "Instrument Serif"', 'italic 400 20px "Instrument Serif"', '400 20px "JetBrains Mono"', '500 20px "JetBrains Mono"'];
+const formatCount = (n, el) => el.dataset.fmt === 'int' ? String(Math.round(n)) : n.toFixed(2);
+
+window.DURATION = DURATION; window.STAGE = STAGE;
+const RENDER = new URLSearchParams(location.search).has('render');
+if (RENDER) document.documentElement.classList.add('render');
+
+/* ===================== math ===================== */
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const outCubic = (x) => 1 - Math.pow(1 - x, 3);
+const inCubic = (x) => x * x * x;
+const inOut = (x) => (x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const outBack = (x) => { const c = 1.9; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+
+/* ===================== scene-specific builders ===================== */
+// SF Symbol stand-ins (the app's own icon names in comments)
+const SPARK = 'M12 2 Q13.2 10.8 22 12 Q13.2 13.2 12 22 Q10.8 13.2 2 12 Q10.8 10.8 12 2Z';
+const ICONS = {
+  glass: '<circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 L21 21" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M10.5 6.8 Q11 10 14.2 10.5 Q11 11 10.5 14.2 Q10 11 6.8 10.5 Q10 10 10.5 6.8Z" fill="currentColor"/>', // sparkle.magnifyingglass
+  folder: '<path d="M3 6.5 a1.5 1.5 0 0 1 1.5-1.5 h4.6 l2 2.2 h8.4 a1.5 1.5 0 0 1 1.5 1.5 v9.3 a1.5 1.5 0 0 1-1.5 1.5 h-15 A1.5 1.5 0 0 1 3 18z" fill="currentColor"/>',
+  folderplus: '<path d="M3 6.5 a1.5 1.5 0 0 1 1.5-1.5 h4.6 l2 2.2 h8.4 a1.5 1.5 0 0 1 1.5 1.5 v9.3 a1.5 1.5 0 0 1-1.5 1.5 h-15 A1.5 1.5 0 0 1 3 18z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 10.5 v6 M9 13.5 h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  sparkle: `<path d="${SPARK}" fill="currentColor"/>`,
+  sparkles: `<path d="${SPARK}" fill="currentColor" transform="translate(0 2) scale(.82)"/><path d="${SPARK}" fill="currentColor" transform="translate(15 0) scale(.36)"/><path d="${SPARK}" fill="currentColor" transform="translate(16 15) scale(.28)"/>`,
+  hexagon: '<path d="M12 3 L19.8 7.5 V16.5 L12 21 L4.2 16.5 V7.5Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+  plus: '<path d="M12 5 v14 M5 12 h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  clock: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5 V12 L15 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  okcircle: '<circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M7.5 12.3 L10.6 15.2 L16.5 9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  check: '<path d="M5 12.5 L10 17 L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>',
+  eye: '<path d="M2.5 12 Q12 3 21.5 12 Q12 21 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3" fill="currentColor"/>',
+  pencil: '<path d="M4 20 L5 15.5 L15.5 5 L19 8.5 L8.5 19Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  slash: '<path d="M15 4 L9 20" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>',
+  book: '<path d="M4 5 Q8 3.5 12 6 Q16 3.5 20 5 V19 Q16 17.5 12 20 Q8 17.5 4 19Z M12 6 V20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+  seal: '<path d="M12 2.5 L14.4 4.6 L17.5 4.3 L18.2 7.4 L20.9 9 L19.6 12 L20.9 15 L18.2 16.6 L17.5 19.7 L14.4 19.4 L12 21.5 L9.6 19.4 L6.5 19.7 L5.8 16.6 L3.1 15 L4.4 12 L3.1 9 L5.8 7.4 L6.5 4.3 L9.6 4.6Z" fill="currentColor"/><path d="M8.3 12.2 L10.9 14.7 L15.8 9.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  doc: '<path d="M6 3 h8 l4 4 v14 H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12 h6 M9 15.5 h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  wrench: '<path d="M14.5 3.5 a5 5 0 0 0-4.6 6.9 L3.8 16.5 a1.9 1.9 0 0 0 2.7 2.7 l6.1-6.1 a5 5 0 0 0 6.9-4.6 l-3 3 l-2.6-.6 l-.6-2.6 l3-3 a5 5 0 0 0-1.8-.3z" fill="currentColor"/>',
+  code: '<path d="M9 7 L4 12 L9 17 M15 7 L20 12 L15 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5" fill="currentColor"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" fill="currentColor"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" fill="currentColor"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" fill="currentColor"/>',
+  bubble: '<path d="M4 5.5 a1.5 1.5 0 0 1 1.5-1.5 h13 a1.5 1.5 0 0 1 1.5 1.5 v9 a1.5 1.5 0 0 1-1.5 1.5 H11 l-4.5 4 v-4 h-1 A1.5 1.5 0 0 1 4 14.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8 h8 M12 8 v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+};
+for (const el of document.querySelectorAll('[data-icon]')) {
+  const svg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${ICONS[el.dataset.icon]}</svg>`;
+  if (el.tagName.toLowerCase() === 'svg') { el.setAttribute('viewBox', '0 0 24 24'); el.innerHTML = ICONS[el.dataset.icon]; }
+  else el.innerHTML = svg;
+}
+
+// background twinkles: seeded, so every render is identical
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const twinkles = [];
+const tw = document.getElementById('twinkles');
+for (let i = 0; i < 26; i++) {
+  const s = 8 + rnd() * 18, x = rnd() * 1580, y = rnd() * 880;
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  el.setAttribute('viewBox', '0 0 24 24'); el.setAttribute('width', s); el.setAttribute('height', s);
+  el.style.left = x + 'px'; el.style.top = y + 'px';
+  el.innerHTML = `<path d="${SPARK}" fill="${rnd() < .3 ? '#F0A21E' : '#F1E7D4'}"/>`;
+  tw.appendChild(el);
+  twinkles.push({ el, w: .6 + rnd() * 1.4, ph: rnd() * 6.28, base: .08 + rnd() * .18 });
+}
+
+/* ===================== per-frame hooks ===================== */
+const all = (sel) => [...document.querySelectorAll(sel)];
+const hooks = [];
+const onFrame = (fn) => hooks.push(fn);
+const halo = document.getElementById('halo');
+onFrame((t) => {
+  for (const s of twinkles) s.el.style.opacity = s.base * (.55 + .45 * Math.sin(t * s.w + s.ph));
+  // halo drifts from centre (intro) to behind the product UI and back for the outro
+  const side = prog(t, 4.6, 6) * (1 - prog(t, 52, 53.2));
+  halo.style.left = lerp(250, 550, side) + 'px';
+  halo.style.top = lerp(-310, -150, side) + 'px';
+});
+const introGlow = document.getElementById('introGlow'), outroGlow = document.getElementById('outroGlow');
+onFrame((t) => {
+  const a = outCubic(prog(t, .25, 1.0)) * (1 - prog(t, 4.2, 4.8));
+  introGlow.style.opacity = a * (.75 + .25 * Math.sin(t * 2.4));
+  introGlow.style.transform = `scale(${.6 + .9 * a})`;
+  const b = outCubic(prog(t, 52.7, 53.4));
+  outroGlow.style.opacity = b * (.75 + .25 * Math.sin(t * 2.4));
+  outroGlow.style.transform = `scale(${.6 + .9 * b})`;
+});
+// bell ding: rings expand out of the logo as it lands
+const rings = all('[data-ring]').map((el) => ({ el, t: +el.dataset.ring }));
+onFrame((t) => {
+  for (const r of rings) {
+    const p = prog(t, r.t, r.t + 1.3);
+    r.el.style.opacity = p > 0 && p < 1 ? .7 * (1 - p) : 0;
+    r.el.style.transform = `scale(${.75 + 1.1 * outCubic(p)})`;
+  }
+});
+const runSpin = document.getElementById('runSpin');
+onFrame((t) => { runSpin.style.rotate = (t * 400) % 360 + 'deg'; });
+
+/* ===================== generic animation registry ===================== */
+const nums = (s) => s.split(',').map(Number);
+const scenes = all('[data-scene]').map((el) => { const [a, b] = nums(el.dataset.scene); return { el, a, b }; });
+const DEF = { up: .7, down: .7, left: .7, right: .8, fade: .5, pop: .45, stamp: .28, wipe: .6, drop: .9, scale: .7 };
+const anims = all('[data-a]').map((el) => {
+  const [i, o, fx = 'up', di, dout] = el.dataset.a.split(',');
+  return { el, i: +i, o: o === '' || o == null ? Infinity : +o, fx, din: di ? +di : DEF[fx], dout: dout ? +dout : .45, rot: +(el.dataset.rot || 0) };
+});
+const typers = all('[data-type]').map((el) => { const [a, b] = nums(el.dataset.type); return { el, a, b, full: el.textContent }; });
+const counters = all('[data-count]').map((el) => {
+  const [from, ...steps] = el.dataset.count.split('|');
+  return { el, from: +from, steps: steps.map(nums) };
+});
+const bars = all('[data-bar]').map((el) => { const [a, b, pct] = nums(el.dataset.bar); return { el, a, b, pct }; });
+const presses = all('[data-press]').map((el) => ({ el, t: +el.dataset.press }));
+const dims = all('[data-dim]').map((el) => ({ el, t: +el.dataset.dim }));
+const chapters = all('[data-chapter]').map((el) => { const [a, b] = nums(el.dataset.chapter); return { el, a, b }; });
+// data-sel="a,b": selected-row highlight while a ≤ t < b
+const sels = all('[data-sel]').map((el) => { const [a, b] = nums(el.dataset.sel); return { el, a, b }; });
+
+function applyAnim(a, t) {
+  const { el } = a;
+  if (t < a.i || t > a.o + a.dout) { el.style.opacity = 0; el.style.visibility = 'hidden'; return; }
+  el.style.visibility = 'visible';
+  const pin = prog(t, a.i, a.i + a.din);
+  // Infinity out-time means "never leaves": prog(t, ∞, ∞) is NaN, so special-case it.
+  const eo = a.o === Infinity ? 0 : inCubic(prog(t, a.o, a.o + a.dout));
+  const ei = a.fx === 'pop' ? outBack(pin) : a.fx === 'drop' ? 1 : outCubic(pin);
+  let x = 0, y = 0, s = 1, r = a.rot, op = clamp(pin * 1.6);
+  switch (a.fx) {
+    case 'up': y = (1 - ei) * 34; break;
+    case 'down': y = -(1 - ei) * 34; break;
+    case 'left': x = -(1 - ei) * 40; break;
+    case 'right': x = (1 - ei) * 70; break;
+    case 'scale': s = .94 + .06 * ei; break;
+    case 'pop': s = .5 + .5 * ei; op = clamp(pin * 4); break;
+    case 'stamp': s = 1.9 - .9 * outCubic(pin); op = clamp(pin * 3); break;
+    case 'wipe': op = 1; el.style.clipPath = `inset(-20px ${(1 - outCubic(pin)) * 100}% -20px -20px)`; break;
+    case 'drop': {
+      const tau = t - a.i;
+      y = -(1 - outCubic(prog(t, a.i, a.i + .45))) * 260;
+      r = a.rot + 14 * Math.exp(-3 * tau) * Math.cos(7 * tau);
+      op = clamp(pin * 5);
+      break;
+    }
+  }
+  if (a.fx !== 'fade' && a.fx !== 'wipe') y -= eo * 26;
+  el.style.opacity = op * (1 - eo);
+  el.style.transform = `translate(${x}px, ${y}px) scale(${s}) rotate(${r}deg)`;
+}
+
+function seek(t) {
+  for (const s of scenes) s.el.style.display = t >= s.a && t < s.b ? 'block' : 'none';
+  if (t >= DURATION - 1e-6) scenes[scenes.length - 1].el.style.display = 'block';
+  for (const a of anims) applyAnim(a, t);
+  for (const ty of typers) {
+    const p = prog(t, ty.a, ty.b);
+    ty.el.textContent = ty.full.slice(0, Math.round(ty.full.length * p));
+    ty.el.classList.toggle('typing', t >= ty.a && t < ty.b + .25);
+  }
+  for (const c of counters) {
+    let v = c.from;
+    for (const [a, b, to] of c.steps) v = lerp(v, to, outCubic(prog(t, a, b)));
+    c.el.textContent = formatCount(v, c.el);
+  }
+  for (const b of bars) b.el.style.width = b.pct * outCubic(prog(t, b.a, b.b)) + '%';
+  for (const p of presses) {
+    const k = Math.sin(Math.PI * prog(t, p.t, p.t + .26));
+    p.el.style.transform = `scale(${1 - .06 * k})`;
+    p.el.style.filter = `brightness(${1 - .25 * k})`;
+  }
+  for (const d of dims) d.el.style.opacity = .38 + .62 * outCubic(prog(t, d.t - .1, d.t + .3));
+  for (const c of chapters) c.el.classList.toggle('on', t >= c.a && t < c.b);
+  for (const s of sels) s.el.classList.toggle('sel', t >= s.a && t < s.b);
+  for (const fn of hooks) fn(t);
+}
+window.seek = seek;
+
+/* ===================== preview player ===================== */
+window.__ready = document.fonts.ready
+  .then(() => Promise.all(FONTS.map((f) => document.fonts.load(f))))
+  .then(() => Promise.all([...document.images].map((img) => img.decode().catch(() => {}))));
+const controls = document.getElementById('controls');
+if (RENDER) { controls.remove(); seek(0); }
+else {
+  const stage = document.getElementById('stage');
+  const fit = () => { const k = Math.min(innerWidth / STAGE.w, (innerHeight - 50) / STAGE.h); stage.style.transform = `scale(${k})`; };
+  addEventListener('resize', fit); fit();
+  const scrub = document.getElementById('scrub'), clock = document.getElementById('clock'), btn = document.getElementById('play');
+  scrub.max = DURATION;
+  let playing = true, t0 = performance.now(), cur = 0;
+  btn.onclick = () => { playing = !playing; btn.textContent = playing ? 'Pause' : 'Play'; t0 = performance.now() - cur * 1000; };
+  scrub.oninput = () => { cur = +scrub.value; t0 = performance.now() - cur * 1000; seek(cur); clock.textContent = cur.toFixed(2); };
+  const loop = (now) => {
+    if (playing) { cur = ((now - t0) / 1000) % DURATION; seek(cur); scrub.value = cur; clock.textContent = cur.toFixed(2); }
+    requestAnimationFrame(loop);
+  };
+  window.__ready.then(() => { t0 = performance.now(); requestAnimationFrame(loop); });
+}
+</script>
+</body>
+</html>
