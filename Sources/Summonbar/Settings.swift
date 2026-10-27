@@ -536,6 +536,7 @@ private struct ShortcutSettings: View {
         ("Run the selected item", "↵"),
         ("Secondary action (shown in the footer)", "⌘↵"),
         ("Show actions for the selected item", "⌘K"),
+        ("Reveal the selected item in Finder", "⇧⌘F"),
         ("Open a project's prompt, or fill in arguments", "⇥"),
         ("Go back, or close Summonbar", "esc"),
         ("Go back when the field is empty", "⌫"),

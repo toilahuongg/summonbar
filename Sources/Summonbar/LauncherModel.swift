@@ -15,6 +15,8 @@ struct ListItem: Identifiable {
     var secondaryLabel: String? = nil
     var secondary: (() -> Void)? = nil
     var actions: (() -> [ListItem])? = nil
+    /// What ⇧⌘F reveals in Finder.
+    var file: URL? = nil
 }
 
 enum Screen {
@@ -176,6 +178,7 @@ final class LauncherModel: ObservableObject {
         guard let item = selectedItem else { return [("Back", "esc")] }
         var h = [(item.primaryLabel, "↵")]
         if let label = item.secondaryLabel { h.append((label, "⌘↵")) }
+        if item.file != nil && item.secondaryLabel != "Reveal in Finder" { h.append(("Reveal in Finder", "⇧⌘F")) }
         if item.actions != nil { h.append(("Actions", "⌘K")) }
         return h
     }
@@ -319,6 +322,9 @@ final class LauncherModel: ObservableObject {
             if case .run(let run) = screen { run.stop() }
             if case .output(let run) = screen { run.stop() }
             return true
+        case "f" where flags.contains(.shift):
+            if let url = selectedItem?.file { reveal(url) }
+            return true
         case ",": finish(); openSettings(); return true
         case "r": reloadAndReport(); return true
         default: return false
@@ -429,7 +435,7 @@ final class LauncherModel: ObservableObject {
             primaryLabel: "Ask Agent", primary: { [unowned self] in push(.prompt(p)) },
             secondaryLabel: agent.map { "Open \($0.name) in \(config.terminalName)" },
             secondary: agent.map { a in { [unowned self] in launch(a, p, prompt: nil) } },
-            actions: { [unowned self] in projectActions(p) })
+            actions: { [unowned self] in projectActions(p) }, file: p.url)
     }
 
     private func projectActions(_ p: Project) -> [ListItem] {
@@ -832,7 +838,7 @@ final class LauncherModel: ObservableObject {
             icon: app.url.path, accessory: accessory.isEmpty ? nil : accessory,
             primaryLabel: running == nil ? "Open" : "Switch To", primary: { [unowned self] in openApp(app) },
             secondaryLabel: "Reveal in Finder", secondary: { [unowned self] in reveal(app.url) },
-            actions: { [unowned self] in appActions(app) })
+            actions: { [unowned self] in appActions(app) }, file: app.url)
     }
 
     /// In Running Applications ↵ quits, like Raycast's Quit Applications.
@@ -842,7 +848,7 @@ final class LauncherModel: ObservableObject {
             subtitle: process.isHidden ? "hidden" : nil, icon: app.url.path, accessory: process.isActive ? "frontmost" : nil,
             primaryLabel: "Quit", primary: { [unowned self] in quit(app, process) },
             secondaryLabel: "Switch To", secondary: { [unowned self] in openApp(app) },
-            actions: { [unowned self] in appActions(app) })
+            actions: { [unowned self] in appActions(app) }, file: app.url)
     }
 
     private func appActions(_ app: InstalledApp) -> [ListItem] {
@@ -1088,7 +1094,8 @@ final class LauncherModel: ObservableObject {
                     ListItem(id: "xa:finder", section: ext.title, title: "Reveal in Finder", icon: "finder",
                              primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([ext.url]); finish() }),
                 ]
-            })
+            },
+            file: ext.url)
     }
 
     private func projectExtensionItems(_ p: Project) -> [ListItem] {
@@ -1228,7 +1235,8 @@ final class LauncherModel: ObservableObject {
                     ListItem(id: "sa:finder", section: cmd.invocation, title: "Reveal in Finder", icon: "finder",
                              primary: { [unowned self] in NSWorkspace.shared.activateFileViewerSelecting([cmd.url]); finish() }),
                 ]
-            })
+            },
+            file: cmd.url)
     }
 
     private func slashArgumentItems(_ cmd: SlashCommand, _ p: Project) -> [ListItem] {

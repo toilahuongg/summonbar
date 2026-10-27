@@ -92,6 +92,7 @@ Default hotkey: **⇧⌘Space** (change it in Settings).
 | Anywhere | ↑ ↓ | Move selection |
 | | ↵ / ⌘↵ | Primary / secondary action (shown in the footer) |
 | | ⌘K | More actions for the selected item |
+| | ⇧⌘F | Reveal the selected project, app, extension or command in Finder |
 | | esc, or ⌫ on an empty field | Back / hide |
 | | ⌘R · ⌘, | Reload projects & config · Settings |
 | Project | ↵ or Tab | Ask an agent in this project |
