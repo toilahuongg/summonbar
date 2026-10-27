@@ -27,6 +27,7 @@ enum Store {
     private static let runsURL = directory.appendingPathComponent("runs.json")
     private static let usageURL = directory.appendingPathComponent("usage.json")
     private static let appUsageURL = directory.appendingPathComponent("app-usage.json")
+    private static let clipboardURL = directory.appendingPathComponent("clipboard.json")
     static let maxRuns = 100
 
     static func loadRuns() -> [RunRecord] {
@@ -48,6 +49,16 @@ enum Store {
     static func saveUsage(_ usage: [String: Date], apps: Bool = false) {
         guard let data = try? encoder.encode(usage) else { return }
         try? data.write(to: apps ? appUsageURL : usageURL, options: .atomic)
+    }
+
+    static func loadClipboard() -> [ClipboardEntry] {
+        guard let data = try? Data(contentsOf: clipboardURL) else { return [] }
+        return (try? decoder.decode([ClipboardEntry].self, from: data)) ?? []
+    }
+
+    static func saveClipboard(_ entries: [ClipboardEntry]) {
+        guard let data = try? encoder.encode(entries) else { return }
+        try? data.write(to: clipboardURL, options: .atomic)
     }
 
     private static let encoder: JSONEncoder = {

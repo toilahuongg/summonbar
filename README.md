@@ -36,6 +36,7 @@ Coding agents live in terminals. That's great for long sessions, but most tasks 
 - **Prompt extensions.** Small scripts that gather context (a diff, failing test output, logs) and hand it to an agent as the task.
 - **An app launcher too.** Installed apps show up in search with aliases, per-app global hotkeys, and quit / restart / hide / force quit / trash from ⌘K, like Raycast.
 - **Translate as you type.** `tr bonjour` shows the translation right in the list; ↵ copies it.
+- **Clipboard history.** What you copy (text, links, images, files) is kept on your Mac, searchable, with a preview. Pin what you reuse, and give it its own hotkey.
 - **Native and small.** Swift + AppKit/SwiftUI, no Electron and no dependencies. It doesn't need Accessibility permission.
 
 <p align="center">
@@ -130,6 +131,7 @@ Open **Settings** with ⌘, in the launcher or from the menu bar. It covers:
 - terminal and editor
 - the default agent
 - the translation languages
+- clipboard history: on or off, and its hotkey
 - per-agent arguments
 - app aliases, hotkeys and which apps show in search
 
@@ -155,6 +157,7 @@ The file itself, `~/.config/summonbar/config.json`, is created on first launch:
 - `terminal`: `ghostty`, `terminal`, `iterm`, or any app name that can open `.command` files.
 - `headlessArgs` apply to inline runs. By default Claude Code can edit files but asks before running anything else, and Codex is sandboxed to the workspace. Set `"disabled": true` on an agent to hide it.
 - `translation` (optional): `{ "to": "en", "alternate": "vi" }`. Text goes into `to`, or into `alternate` when it's already in `to`. `to` defaults to English and `alternate` to your first other system language; set `alternate` to `""` to turn it off. Codes are Google Translate's (`zh-CN`, `ja`, `pt`, …).
+- `clipboard` (optional): `{ "enabled": false }` stops saving clipboard history, `"hotkey": "cmd+shift+v"` opens it from anywhere, and `"maxItems"` sets how many entries are kept (200 by default; pinned ones don't count).
 - `checkForUpdates` (optional): `false` stops the daily check for a new release. You can still check from the menu bar.
 - `extensionDirectories` (optional): extra folders to load extensions from, e.g. a team repo of shared prompts.
 - `applications` (optional), keyed by bundle identifier so the settings survive an app moving:
@@ -252,6 +255,20 @@ The translator also opens from the **Translate** command and shows long text in 
 
 Translations come from Google Translate's keyless web endpoint, so the text you translate is sent to Google.
 
+## Clipboard History
+
+Summonbar keeps what you copy: text, links, images and files. Open **Clipboard History** from the launcher, the menu bar, or a hotkey you set in **Settings › General › Clipboard**. The list is on the left, grouped by day with pinned entries on top, and the selected entry is previewed on the right with where and when it was copied. Type to search.
+
+| Where | Key | Action |
+|---|---|---|
+| Clipboard History | ↵ | Copy the entry and hide the launcher; paste it with ⌘V |
+| | ⌘↵ | Pin or unpin it |
+| | ⌘K | Open a link in the browser, translate text, open files or copy their paths, open an image in Preview, delete, or clear history |
+
+Summonbar doesn't paste for you, since that would need Accessibility permission.
+
+History stays on this Mac, in `~/Library/Application Support/Summonbar/clipboard.json` with images next to it in `clipboard/`. The last 200 entries are kept, plus everything pinned. **Clear History** keeps pinned entries. What password managers mark as concealed or transient ([nspasteboard.org](http://nspasteboard.org)), and anything copied from Keychain Access or Passwords, is never saved. Text or images over 10 MB are skipped too.
+
 ## Claude Code commands and skills
 
 Summonbar reads each project's own Claude Code setup and lists it next to the extensions:
@@ -320,6 +337,7 @@ Sources/Summonbar/
   SlashCommands.swift  .claude commands and skills, .agents skills
   Apps.swift           installed-app scanner, open / quit / restart / trash
   Translate.swift      languages, Google Translate client, live translation state
+  Clipboard.swift      clipboard history: pasteboard polling, entries, pins
   Terminal.swift       terminal / editor launching
   Shell.swift          login-shell environment capture (PATH from nvm etc.)
   LoginItem.swift      launch at login (SMAppService), re-registered after ad-hoc rebuilds

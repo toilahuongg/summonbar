@@ -51,6 +51,12 @@ struct LauncherView: View {
             ExtensionOutputView(run: run)
         } else if case .translate(let translation) = model.screen {
             TranslateView(translation: translation)
+        } else if model.isShowingClipboard {
+            HStack(spacing: 0) {
+                ResultsList(model: model).frame(width: 330)
+                Divider().opacity(0.6)
+                ClipboardPreview(entry: model.selectedClipboardEntry, monitoring: model.clipboard.isMonitoring)
+            }
         } else {
             ResultsList(model: model)
         }
@@ -330,6 +336,94 @@ struct TranslateView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+struct ClipboardPreview: View {
+    let entry: ClipboardEntry?
+    let monitoring: Bool
+
+    var body: some View {
+        if let entry {
+            VStack(alignment: .leading, spacing: 0) {
+                ScrollView {
+                    content(entry)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Divider().opacity(0.6)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(details(entry), id: \.0) { label, value in
+                        HStack {
+                            Text(label).foregroundStyle(.secondary)
+                            Spacer()
+                            Text(value).lineLimit(1).truncationMode(.middle)
+                        }
+                    }
+                }
+                .font(.system(size: 11.5))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+        } else {
+            Text(monitoring ? "Copy something and it shows up here." : "Clipboard history is off. Turn it on in Settings › General.")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder private func content(_ entry: ClipboardEntry) -> some View {
+        switch entry.kind {
+        case .text:
+            // Very long text would make SwiftUI lay out megabytes; the copy is still complete.
+            let text = entry.text ?? ""
+            Text(text.count > 20_000 ? text.prefix(20_000) + "\n…" : text)
+                .font(.system(size: 12.5, design: .monospaced))
+                .textSelection(.enabled)
+        case .image:
+            if let url = entry.imageURL, let image = NSImage(contentsOf: url) {
+                Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 300)
+            } else {
+                Text("The image file is missing.").foregroundStyle(.secondary)
+            }
+        case .files:
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(entry.fileURLs, id: \.self) { url in
+                    HStack(spacing: 8) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 28, height: 28)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(url.lastPathComponent).font(.system(size: 13))
+                            Text(url.deletingLastPathComponent().tildePath).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    }
+                }
+            }
+        }
+    }
+
+    private func details(_ entry: ClipboardEntry) -> [(String, String)] {
+        var out: [(String, String)] = []
+        switch entry.kind {
+        case .text:
+            let text = entry.text ?? ""
+            out.append(("Characters", text.count.formatted()))
+            let lines = text.split(whereSeparator: \.isNewline).count
+            if lines > 1 { out.append(("Lines", lines.formatted())) }
+        case .image:
+            if let url = entry.imageURL, let rep = NSImageRep(contentsOf: url) {
+                out.append(("Dimensions", "\(rep.pixelsWide) × \(rep.pixelsHigh)"))
+            }
+        case .files:
+            out.append(("Files", entry.fileURLs.count.formatted()))
+        }
+        if let app = entry.sourceApp { out.append(("Copied from", app)) }
+        out.append(("Copied", entry.date.formatted(date: .abbreviated, time: .shortened)))
+        return out
     }
 }
 

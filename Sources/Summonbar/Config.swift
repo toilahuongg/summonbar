@@ -55,6 +55,25 @@ struct TranslationConfig: Codable {
     }
 }
 
+/// The `clipboard` key of config.json.
+struct ClipboardConfig: Codable {
+    /// Save what's copied; on unless set to false.
+    var enabled: Bool?
+    /// A global hotkey that opens Clipboard History, e.g. "cmd+shift+v".
+    var hotkey: String?
+    /// How many entries to keep, not counting pinned ones.
+    var maxItems: Int?
+
+    var isEnabled: Bool { enabled ?? true }
+    var limit: Int { max(maxItems ?? 200, 1) }
+    var hotkeySpec: String? { hotkey.flatMap { $0.isEmpty ? nil : $0 } }
+
+    /// Nil when nothing is set, so config.json stays tidy.
+    var nonEmpty: ClipboardConfig? {
+        enabled == nil && hotkeySpec == nil && maxItems == nil ? nil : self
+    }
+}
+
 /// On-disk shape of ~/.config/summonbar/config.json. Every key is optional.
 private struct ConfigFile: Codable {
     var workspacesRoot: String?
@@ -68,6 +87,7 @@ private struct ConfigFile: Codable {
     var extensionDirectories: [String]?
     var applications: ApplicationsConfig?
     var translation: TranslationConfig?
+    var clipboard: ClipboardConfig?
 }
 
 struct Config {
@@ -84,6 +104,7 @@ struct Config {
     var extensionDirectories: [URL]
     var applications: ApplicationsConfig
     var translation: TranslationConfig
+    var clipboard: ClipboardConfig
 
     static let directory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/summonbar", isDirectory: true)
@@ -119,7 +140,8 @@ struct Config {
             agents: defaultAgents.merging(file.agents ?? [:]) { _, user in user },
             extensionDirectories: (file.extensionDirectories ?? []).map { URL(fileURLWithPath: expand($0), isDirectory: true) },
             applications: file.applications ?? ApplicationsConfig(),
-            translation: file.translation ?? TranslationConfig()
+            translation: file.translation ?? TranslationConfig(),
+            clipboard: file.clipboard ?? ClipboardConfig()
         )
     }
 
@@ -150,7 +172,8 @@ struct Config {
             agents: agents,
             extensionDirectories: extensionDirectories.isEmpty ? nil : extensionDirectories.map(\.tildePath),
             applications: applications.nonEmpty,
-            translation: translation.to == nil && translation.alternate == nil ? nil : translation
+            translation: translation.to == nil && translation.alternate == nil ? nil : translation,
+            clipboard: clipboard.nonEmpty
         ))
     }
 

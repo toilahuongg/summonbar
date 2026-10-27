@@ -47,6 +47,8 @@ final class SettingsModel: ObservableObject {
     @Published var translateAlternate: String? { didSet { scheduleSave() } }
     @Published var agents: [AgentRow] = [] { didSet { scheduleSave() } }
     @Published var appsInSearch = true { didSet { scheduleSave() } }
+    @Published var clipboardEnabled = true { didSet { scheduleSave() } }
+    @Published var clipboardHotkey = "" { didSet { scheduleSave() } }
     @Published var appRows: [AppRow] = [] { didSet { scheduleSave() } }
     @Published var appFilter = ""
     @Published var tab = Tab.general
@@ -77,6 +79,8 @@ final class SettingsModel: ObservableObject {
         checkForUpdates = config.checkForUpdates
         translateTo = config.translation.target
         translateAlternate = config.translation.alternate
+        clipboardEnabled = config.clipboard.isEnabled
+        clipboardHotkey = config.clipboard.hotkeySpec ?? ""
         agents = AgentCatalog.specs.map { spec in
             let override = config.agents[spec.id]
             return AgentRow(id: spec.id, name: spec.name, icon: spec.icon, path: Shell.which(spec.binary),
@@ -121,6 +125,8 @@ final class SettingsModel: ObservableObject {
         config.checkForUpdates = checkForUpdates
         config.translation.to = translateTo == "en" && config.translation.to == nil ? nil : translateTo
         config.translation.alternate = translateAlternate
+        config.clipboard.enabled = clipboardEnabled ? nil : false
+        config.clipboard.hotkey = clipboardHotkey.isEmpty ? nil : clipboardHotkey
         for row in agents {
             let args = Args.split(row.args), headless = Args.split(row.headlessArgs)
             // Keep config.json tidy: only write agents the user has touched.
@@ -402,6 +408,26 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section {
+                Toggle("Save clipboard history", isOn: $model.clipboardEnabled)
+                LabeledContent("Hotkey") {
+                    HStack(spacing: 4) {
+                        HotKeyRecorder(spec: $model.clipboardHotkey, onRecordingChange: model.pauseHotKey, placeholder: "Record Hotkey")
+                        Button { model.clipboardHotkey = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .opacity(model.clipboardHotkey.isEmpty ? 0 : 1)
+                            .disabled(model.clipboardHotkey.isEmpty)
+                            .help("Remove hotkey")
+                    }
+                }
+            } header: {
+                Text("Clipboard")
+            } footer: {
+                Text("Keeps what you copy (the last 200 by default) on this Mac only. Passwords marked as concealed by password managers are skipped.")
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Apps") {
                 Picker("Terminal", selection: appBinding(\.terminal)) {
                     ForEach(model.terminalChoices, id: \.self) { Text($0.name).tag($0.value) }
@@ -571,6 +597,11 @@ private struct ShortcutSettings: View {
         ("Swap languages", "⌘↵"),
         ("Pick a language", "⌘K"),
     ]
+    private static let clipboard = [
+        ("Copy, then paste with ⌘V", "↵"),
+        ("Pin or unpin", "⌘↵"),
+        ("Open in browser, translate, delete, clear", "⌘K"),
+    ]
     private static let prefixes = [
         ("Create a new project", "new …"),
         ("Translate text", "tr …"),
@@ -581,6 +612,9 @@ private struct ShortcutSettings: View {
         Form {
             Section {
                 ShortcutRow(label: "Open Summonbar", keys: HotKey.describe(model.hotkey))
+                if !model.clipboardHotkey.isEmpty {
+                    ShortcutRow(label: "Clipboard History", keys: HotKey.describe(model.clipboardHotkey))
+                }
                 ForEach(model.appRows.filter { !$0.hotkey.isEmpty }) { row in
                     ShortcutRow(label: "Open \(row.app.name)", keys: HotKey.describe(row.hotkey))
                 }
@@ -593,6 +627,7 @@ private struct ShortcutSettings: View {
             section("Agent run", Self.agentRun)
             section("Extension output", Self.extensionOutput)
             section("Translate", Self.translate)
+            section("Clipboard History", Self.clipboard)
             section("Type in the search field", Self.prefixes)
         }
         .formStyle(.grouped)

@@ -36,6 +36,8 @@ enum Screen {
     case apps(running: Bool)
     /// Translates what's typed as you type.
     case translate(Translation)
+    /// What was copied lately, newest first.
+    case clipboard
 }
 
 @MainActor
@@ -69,6 +71,7 @@ final class LauncherModel: ObservableObject {
     private var appScan: Task<Void, Never>?
     /// Backs the "tr <text>" item in the root search.
     private var rootTranslation: Translation?
+    let clipboard = ClipboardHistory()
     private var usage = Store.loadUsage()
     private var sessions: [AgentSession] = []
     private var sessionScan: Task<Void, Never>?
@@ -83,6 +86,7 @@ final class LauncherModel: ObservableObject {
     var runsChanged: () -> Void = {}
 
     init() {
+        clipboard.onChange = { [weak self] in self?.clipboardDidChange() }
         reload()
         runs = Store.loadRuns().map { record in
             let run = AgentRun(record: record, agent: agents.first { $0.id == record.agentId })
@@ -135,6 +139,7 @@ final class LauncherModel: ObservableObject {
         case .slash(let cmd, _): return cmd.argumentHint.map { "Arguments: \($0)" } ?? "Arguments for \(cmd.invocation) (optional)"
         case .apps(let running): return running ? "Search running applications…" : "Search applications…"
         case .translate: return "Type or paste text to translate…"
+        case .clipboard: return "Search clipboard history…"
         }
     }
 
@@ -151,6 +156,7 @@ final class LauncherModel: ObservableObject {
         case .slash(let cmd, let project): return "\(cmd.invocation) · \(project.name)"
         case .apps(let running): return running ? "Running Applications" : "Applications"
         case .translate: return "Translate"
+        case .clipboard: return "Clipboard History"
         }
     }
 
@@ -192,6 +198,7 @@ final class LauncherModel: ObservableObject {
         slashCache = [:]
         personalSlashCache = nil
         rootTranslation = nil
+        clipboard.configure(config.clipboard)
         rescanApps()
     }
 
@@ -345,6 +352,7 @@ final class LauncherModel: ObservableObject {
         case .slash(let cmd, let project): items = slashArgumentItems(cmd, project)
         case .apps(let running): items = appListItems(runningOnly: running)
         case .translate(let t): items = []; t.update(query)
+        case .clipboard: items = clipboardItems()
         }
         if selection >= items.count { selection = max(items.count - 1, 0) }
     }
@@ -556,6 +564,10 @@ final class LauncherModel: ObservableObject {
                      icon: "clock.arrow.circlepath", tint: .purple, primary: { [unowned self] in openSessions(nil) }),
             ListItem(id: "c:translate", section: "Commands", title: "Translate", subtitle: "Or type “tr ” and the text",
                      icon: "character.bubble", tint: .indigo, primary: { [unowned self] in openTranslator() }),
+            ListItem(id: "c:clipboard", section: "Commands", title: "Clipboard History",
+                     subtitle: clipboard.isMonitoring ? "\(clipboard.entries.count) copied items" : "Off · turn it on in Settings › General",
+                     icon: "doc.on.clipboard", tint: .teal, accessory: config.clipboard.hotkeySpec.map(HotKey.describe),
+                     primary: { [unowned self] in push(.clipboard) }),
             ListItem(id: "c:apps", section: "Commands", title: "Applications", subtitle: "\(visibleApps.count) installed",
                      icon: "square.grid.2x2", tint: .blue, primary: { [unowned self] in push(.apps(running: false)) }),
             ListItem(id: "c:running", section: "Commands", title: "Running Applications", subtitle: "Switch to, hide or quit apps",
@@ -1060,6 +1072,112 @@ final class LauncherModel: ObservableObject {
             }
     }
 
+    // MARK: - Clipboard
+
+    var isShowingClipboard: Bool {
+        if case .clipboard = screen { return true }
+        return false
+    }
+
+    var selectedClipboardEntry: ClipboardEntry? {
+        guard isShowingClipboard, let item = selectedItem else { return nil }
+        return clipboard.entries.first { "clip:\($0.id)" == item.id }
+    }
+
+    /// Opens Clipboard History from its global hotkey.
+    func showClipboard() {
+        frames = [Frame(screen: .root)]
+        push(.clipboard)
+    }
+
+    /// Keeps the same entry selected when one is pinned or something new is copied.
+    private func clipboardDidChange() {
+        guard isShowingClipboard else { return }
+        let id = selectedItem?.id
+        refresh()
+        if let id, let i = items.firstIndex(where: { $0.id == id }) { selection = i }
+    }
+
+    private func clipboardItems() -> [ListItem] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let entries = clipboard.entries.filter { q.isEmpty || $0.matches(q) }
+        return (entries.filter(\.isPinned) + entries.filter { !$0.isPinned }).map(clipboardItem)
+    }
+
+    private func clipboardItem(_ entry: ClipboardEntry) -> ListItem {
+        let icon: String
+        switch entry.kind {
+        case .text: icon = entry.link != nil ? "link" : "doc.plaintext"
+        case .files: icon = entry.fileURLs.count == 1 ? "doc" : "doc.on.doc"
+        case .image: icon = entry.imageURL?.path ?? "photo"
+        }
+        return ListItem(
+            id: "clip:\(entry.id)", section: entry.isPinned ? "Pinned" : daySection(entry.date), title: entry.title,
+            icon: icon, tint: .teal, accessory: relativeDate(entry.date),
+            primaryLabel: "Copy", primary: { [unowned self] in copyClipboardEntry(entry) },
+            secondaryLabel: entry.isPinned ? "Unpin" : "Pin", secondary: { [unowned self] in clipboard.togglePin(entry) },
+            actions: { [unowned self] in clipboardActions(entry) },
+            file: entry.kind == .files ? entry.fileURLs.first : nil)
+    }
+
+    private func clipboardActions(_ entry: ClipboardEntry) -> [ListItem] {
+        let section = "Clipboard"
+        var out = [
+            ListItem(id: "ca:copy", section: section, title: "Copy", subtitle: "Then paste it with ⌘V", icon: "doc.on.clipboard",
+                     tint: .teal, primary: { [unowned self] in copyClipboardEntry(entry) }),
+            ListItem(id: "ca:pin", section: section, title: entry.isPinned ? "Unpin" : "Pin",
+                     subtitle: entry.isPinned ? nil : "Pinned entries stay on top and are never cleared", icon: "pin",
+                     primary: { [unowned self] in clipboard.togglePin(entry); closeActions() }),
+        ]
+        if let link = entry.link {
+            out.append(ListItem(id: "ca:link", section: section, title: "Open in Browser", subtitle: link.absoluteString,
+                                icon: "safari", tint: .blue, primary: { [unowned self] in NSWorkspace.shared.open(link); finish() }))
+        }
+        if let text = entry.text, entry.kind == .text {
+            out.append(ListItem(id: "ca:translate", section: section, title: "Translate", icon: "character.bubble", tint: .indigo,
+                                primary: { [unowned self] in closeActions(); openTranslator(text) }))
+        }
+        if entry.kind == .files {
+            out += [
+                ListItem(id: "ca:open", section: section, title: "Open", icon: "arrow.up.forward.app", tint: .blue,
+                         primary: { [unowned self] in entry.fileURLs.forEach { NSWorkspace.shared.open($0) }; finish() }),
+                ListItem(id: "ca:paths", section: section, title: entry.fileURLs.count == 1 ? "Copy Path" : "Copy Paths",
+                         icon: "text.alignleft", primary: { [unowned self] in
+                             copy((entry.paths ?? []).joined(separator: "\n"), label: entry.fileURLs.count == 1 ? "path" : "paths")
+                         }),
+            ]
+        }
+        if let url = entry.imageURL {
+            out.append(ListItem(id: "ca:preview", section: section, title: "Open in Preview", icon: "photo", tint: .blue,
+                                primary: { [unowned self] in
+                                    NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Preview.app"),
+                                                            configuration: NSWorkspace.OpenConfiguration())
+                                    finish()
+                                }))
+        }
+        out += [
+            ListItem(id: "ca:delete", section: section, title: "Delete", icon: "trash", tint: .red,
+                     primary: { [unowned self] in clipboard.delete(entry); closeActions(); flash("Deleted from clipboard history") }),
+            ListItem(id: "ca:clear", section: section, title: "Clear History…", subtitle: "Pinned entries are kept",
+                     icon: "trash.slash", tint: .red, primary: { [unowned self] in
+                         let count = clipboard.entries.filter { !$0.isPinned }.count
+                         confirm("Clear Clipboard History?", "Delete \(count) Entr\(count == 1 ? "y" : "ies")", icon: "trash",
+                                 subtitle: "Pinned entries are kept") { [unowned self] in
+                             clipboard.clear()
+                             closeActions()
+                             flash("Clipboard history cleared")
+                         }
+                     }),
+        ]
+        return out
+    }
+
+    /// Copies the entry and hides the launcher, so it can be pasted right away.
+    private func copyClipboardEntry(_ entry: ClipboardEntry) {
+        clipboard.copy(entry)
+        finish()
+    }
+
     // MARK: - Extensions
 
     private func agent(for ext: Extension) -> Agent? {
@@ -1327,6 +1445,7 @@ final class LauncherModel: ObservableObject {
 
     func saveNow() {
         Store.saveRuns(runs.map(\.record))
+        clipboard.saveNow()
     }
 
     // MARK: - Helpers

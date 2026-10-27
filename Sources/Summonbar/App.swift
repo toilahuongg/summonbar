@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
     private var appHotKeys: [HotKey] = []
+    private var clipboardHotKey: HotKey?
     private let settings = SettingsWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -49,9 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             hotKey = nil
             appHotKeys = []
+            clipboardHotKey = nil
             if !paused {
                 registerHotKey(report: false)
                 registerAppHotKeys()
+                registerClipboardHotKey()
             }
         }
         installMainMenu()
@@ -62,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
         registerHotKey()
         registerAppHotKeys()
+        registerClipboardHotKey()
 
         let updater = Updater.shared
         updater.onChange = { [weak self] in
@@ -119,14 +123,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return failed
     }
 
+    /// Opens Clipboard History, or hides the launcher when it's already showing it.
+    @discardableResult
+    private func registerClipboardHotKey() -> String? {
+        clipboardHotKey = nil
+        guard let spec = model.config.clipboard.hotkeySpec else { return nil }
+        clipboardHotKey = HotKey(spec) { [weak self] in
+            guard let self else { return }
+            if panel.isVisible && model.isShowingClipboard {
+                panel.hide()
+            } else {
+                model.showClipboard()
+                panel.show()
+            }
+        }
+        return clipboardHotKey == nil ? HotKey.describe(spec) : nil
+    }
+
     /// Re-reads config.json and applies it. Returns an error for the Settings window.
     private func applyConfig() -> String? {
         model.reload()
         model.refresh()
         hotKey = nil
         appHotKeys = []
+        clipboardHotKey = nil
         let ok = registerHotKey(report: false)
         let failed = (ok ? [] : [HotKey.describe(model.config.hotkey)]) + registerAppHotKeys()
+            + [registerClipboardHotKey()].compactMap { $0 }
         rebuildMenu()
         return failed.isEmpty ? nil : "Couldn't register \(failed.joined(separator: ", ")) — another app may be using it."
     }
@@ -173,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = NSMenuItem(title: "Open Summonbar  (\(HotKey.describe(model.config.hotkey)))", action: #selector(openPanel), keyEquivalent: "")
         menu.addItem(open)
         menu.addItem(NSMenuItem(title: "Agent Runs", action: #selector(openRuns), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Clipboard History", action: #selector(openClipboard), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Reload Config & Hotkey", action: #selector(reloadConfig), keyEquivalent: ""))
@@ -196,6 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openRuns() {
         model.showRuns()
+        panel.show()
+    }
+
+    @objc private func openClipboard() {
+        model.showClipboard()
         panel.show()
     }
 
